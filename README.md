@@ -66,7 +66,7 @@ untrusted comment: kintsugi-usb release signing key (Ed25519)
 Verify a signed release with the bundled wrapper (it checks sha256 first, then the signature if a `.minisig` and `kintsugi.pub` are present):
 
 ```bash
-./scripts/verify-image.sh kintsugi-vX.Y.Z.img.zst
+./scripts/verify-image.sh kintsugi-v2026.5.0.img.zst
 ```
 
 Rotation history and the secret-key custody model are documented in [SECURITY.md](SECURITY.md#release-signing-key).

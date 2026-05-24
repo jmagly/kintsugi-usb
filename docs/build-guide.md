@@ -1,6 +1,8 @@
 # Build Guide: ML-Augmented Boot & Support USB
 
-How to reproduce this USB from scratch.
+How to reproduce this USB from scratch — by hand.
+
+> **Scope — manual / advanced reference.** This is the **fully manual** Ventoy assembly: a hand-built Ventoy drive carrying stock Ubuntu Desktop + hand-placed tools, models, and rescue ISOs. The **supported path** is the toolkit: `./scripts/kintsugi-build` builds a *custom* live-build ISO (ADR-007) and `scripts/usb-toolkit/make-ventoy-image.sh` ([#42](https://git.integrolabs.net/roctinam/kintsugi-usb/issues/42)) automates Steps 1–7 below (Ventoy install, layout, persistence, ISO placement). Start with `toolkit-guide.md`. Keep this guide as the reference for the underlying Ventoy mechanics and for one-off manual builds; the toolkit is what produces the distributable `v2026.5.0` image. Default rescue bundle + pinned versions/sha256 are tracked in `manifest/rescue-isos-recommended.yaml` ([#35](https://git.integrolabs.net/roctinam/kintsugi-usb/issues/35)).
 
 ---
 
@@ -82,7 +84,8 @@ sudo chmod +x /mnt/ventoy/tools/bin/*.sh
 
 ```bash
 cd /tmp/ventoy-1.1.05
-sudo bash CreatePersistentImg.sh -s 12288 -l casper-rw -o /mnt/ventoy/persistence/ubuntu-ml-persist.dat
+# 32 GiB default (per #34; size to your stick). The toolkit bakes this via make-ventoy-image.sh --persistence-size.
+sudo bash CreatePersistentImg.sh -s 32768 -l casper-rw -o /mnt/ventoy/persistence/ubuntu-ml-persist.dat
 ```
 
 ## Step 7: Configure Ventoy

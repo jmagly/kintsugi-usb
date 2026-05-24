@@ -262,9 +262,22 @@ If a build crashes mid-way, rerun from the profile — the profile is schema-ver
 
 ---
 
-## 7. Sanitize, image, and publish your build
+## 7. Assemble, sanitize, image, and publish your build
 
-A Live ISO from step 6 is buildable and bootable, but it is not yet a **distributable image**. Three more steps turn it into one.
+A live ISO from step 6 is buildable and bootable, but it is not yet a **distributable Ventoy image**. The remaining steps turn it into one: assemble the Ventoy `.img`, sanitize, package, and publish.
+
+### 7.0 Assemble the Ventoy image
+
+`scripts/usb-toolkit/make-ventoy-image.sh` builds the flashable Ventoy `.img`: the Ventoy bootloader (UEFI + legacy), a **32 GiB persistence** `.dat` bound to the Kintsugi ISO, and your rescue ISOs + the Kintsugi ISO copied into the boot menu.
+
+```bash
+sudo scripts/usb-toolkit/make-ventoy-image.sh \
+     --kintsugi-iso ~/kintsugi-builds/<build_name>/*.iso \
+     [--rescue-iso <iso> …] [--persistence-size 32]
+# --dry-run validates inputs and prints the layout without touching disks.
+```
+
+> **Status (2026-05-24):** `make-ventoy-image.sh` ([#42](https://git.integrolabs.net/roctinam/kintsugi-usb/issues/42)) and persistence ([#34](https://git.integrolabs.net/roctinam/kintsugi-usb/issues/34)) are committed; wiring this step into a single unattended `kintsugi-build` run is in progress ([#36](https://git.integrolabs.net/roctinam/kintsugi-usb/issues/36)), and the boot/persistence round-trip is validated on hardware under [#37](https://git.integrolabs.net/roctinam/kintsugi-usb/issues/37). Until #36 lands, run this step explicitly between the ISO build and §7.1. For the fully manual Ventoy procedure this automates, see [`build-guide.md`](build-guide.md).
 
 ### 7.1 Sanitize
 
@@ -287,10 +300,11 @@ If `prep-master.sh` reports warnings, investigate before continuing. Do not imag
 ### 7.2 Image
 
 ```bash
-sudo scripts/create-image.sh ~/kintsugi-builds/<build_name>
+# Source is the Ventoy .img assembled in §7.0 (create-image also accepts a raw .iso for a single-boot image).
+scripts/create-image.sh dist/kintsugi-ventoy.img --name <build_name>
 ```
 
-Produces `<build_name>.img.zst` + `<build_name>.img.zst.sha256` in the build directory. The sha256 file is the only integrity artifact in v1.0 (see §8).
+Produces `<build_name>.img.zst` + `<build_name>.img.zst.sha256`. The sha256 file is the only integrity artifact in v1.0 (signing deferred to v1.1, see §8).
 
 ### 7.3 Generate manifest
 

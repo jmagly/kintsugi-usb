@@ -22,10 +22,10 @@ For v1.0, any maintainer-produced images (published to the warehouse NFS mount p
 
 ```bash
 # Linux / macOS
-shasum -a 256 -c kintsugi-vX.Y.Z.img.zst.sha256
+shasum -a 256 -c kintsugi-v2026.5.0.img.zst.sha256
 
 # Windows PowerShell
-Get-FileHash kintsugi-vX.Y.Z.img.zst -Algorithm SHA256
+Get-FileHash kintsugi-v2026.5.0.img.zst -Algorithm SHA256
 ```
 
 SHA-256 protects against **accidental corruption in transit**. It does **not**, on its own, protect against malicious substitution if an attacker can modify both the image and the checksum on the host serving them.

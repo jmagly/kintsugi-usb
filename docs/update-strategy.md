@@ -15,7 +15,7 @@ A running Kintsugi USB has four independent content layers, each with its own re
 | **1. Docs & scripts** | `docs/`, `scripts/`, `manifest/*.yaml`, runbooks, recovery packs, ADRs | Persistence overlay (`/data/repo/kintsugi-usb/`) + binaries copied to `/usr/local/bin/` at ISO build time | `git pull` in the clone; re-copy scripts if you want the new versions to run | No |
 | **2. Models** | GGUF weights (llama.cpp) and Ollama blobs | `/data/models/user/` and `/data/ollama/` in persistence | `kintsugi-models pull <slug>` / `--all` | No |
 | **3. Agentic frameworks** | Aider, Claude Code, Codex CLI, Continue.dev, etc. | System paths (pipx, npm global, apt) or `~/.local/` in persistence | `kintsugi-frameworks install <name>` | No |
-| **4. Base image** | Ubuntu squashfs, kernel, Ollama binary, llama.cpp binary, Ventoy, rescue ISO menu, VS Code + Copilot extension | Read-only ISO layer baked into `kintsugi-vX.Y.Z.img.zst` | Download new `.img.zst`, verify, reflash | **Yes** (destroys persistence unless backed up) |
+| **4. Base image** | Ubuntu squashfs, kernel, Ollama binary, llama.cpp binary, Ventoy, rescue ISO menu, VS Code + Copilot extension | Read-only ISO layer baked into `kintsugi-v2026.5.0.img.zst` | Download new `.img.zst`, verify, reflash | **Yes** (destroys persistence unless backed up) |
 
 Rule of thumb:
 
