@@ -52,6 +52,25 @@ Issues are tracked in Gitea: https://git.integrolabs.net/roctinam/kintsugi-usb/i
 
 **MIT** — see [LICENSE](LICENSE). The repository (scripts, docs, YAML manifests) is MIT-licensed. Bundled third-party binaries retain their own licenses — see `manifest/THIRD-PARTY-LICENSES.md` (iteration-1 deliverable). Model weights and agentic-framework binaries are user-fetched at build-time or boot-time and carry their own licenses; the user is responsible for reviewing those before use.
 
+## Release signing & public key
+
+> **Reserved — populated when v1.1 signing lands ([issue #19](https://git.integrolabs.net/roctinam/kintsugi-usb/issues/19)).** v2026.5.0 ships sha256-only verification per [ADR-006 §D5](.aiwg/architecture/adr-006-wizard-first-ux-and-user-driven-agentic-frameworks.md). Until a key is published here, treat any file claiming to be `kintsugi.pub` as untrusted.
+
+From v1.1, maintainer-produced release artifacts carry a [minisign](https://jedisct1.github.io/minisign/) (Ed25519) signature. Pin the maintainer's public key from this block — verifying against a key you fetched out-of-band (here, over HTTPS from the canonical repo) is what makes a signature meaningful:
+
+```text
+untrusted comment: kintsugi-usb release signing key (Ed25519)
+<PUBKEY-PENDING-v1.1>
+```
+
+Verify a signed release with the bundled wrapper (it checks sha256 first, then the signature if a `.minisig` and `kintsugi.pub` are present):
+
+```bash
+./scripts/verify-image.sh kintsugi-vX.Y.Z.img.zst
+```
+
+Rotation history and the secret-key custody model are documented in [SECURITY.md](SECURITY.md#release-signing-key).
+
 ## Quick start for recipients
 
 You received a Kintsugi USB image file. Here's how to use it.

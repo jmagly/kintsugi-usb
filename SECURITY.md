@@ -36,10 +36,36 @@ A full cryptographic signing flow (minisign, Ed25519) is scheduled for v1.1. At 
 
 - Every release artifact will carry a `.minisig` signature
 - The maintainer's public key `kintsugi.pub` will be committed to this repo and pinned in `README.md`
-- `scripts/verify-release.sh` will wrap the sha256 + minisign verification in a single command
+- `scripts/verify-image.sh` wraps the sha256 + minisign verification in a single command (the sha256 stage is live today; the minisign stage activates automatically once a `.minisig` and `kintsugi.pub` are present)
 - `docs/flash-image.md` will gain per-OS one-liners for the full verify flow
 
 This deferral is an explicit trade-off to let iteration-1 focus on the build toolkit (the wizard is the product). See [ADR-003](.aiwg/architecture/adr-003-verification-rigor.md) (amended) and [ADR-006 §D5](.aiwg/architecture/adr-006-wizard-first-ux-and-user-driven-agentic-frameworks.md).
+
+## Release signing key
+
+The signing key is a long-lived Ed25519 minisign keypair. This section is the authoritative record of its custody model and rotation procedure. The procedure is documented now (issue #19); the keypair itself is generated as a separate offline ceremony before the first signed (v1.1) release.
+
+### Secret-key custody
+
+- The **secret key is never committed to this repository** and never stored on a networked build host. It lives on the maintainer's trusted offline machine (or a hardware token). Its location is recorded **privately**, outside this repo.
+- Only `kintsugi.pub` is public — committed to repo root and pinned in [`README.md`](README.md#release-signing--public-key). Recipients trust it on first use (TOFU); there is no web-of-trust.
+- The build/publish host (`scripts/publish-release.sh`) never holds the secret key. Signing is a deliberate maintainer step performed on the offline machine against the artifact's sha256, not an automated CI action — at least until a hardware-token-backed signer is wired up.
+
+### Rotation procedure
+
+Rotate when: the secret key is suspected compromised, the storage medium is retired, or on a routine cadence (recommended: every 2 years, or per organizational policy).
+
+1. **Generate the replacement keypair offline** — on the trusted/offline machine: `minisign -G -p kintsugi-new.pub -s kintsugi-new.key`. Store the new secret key with the same custody discipline as the old one.
+2. **Publish a transition notice** — before retiring the old key, commit the new `kintsugi.pub` alongside the old one in a clearly-labeled `## Key rotation` block in this file, signed-over by the **old** key where possible, so recipients can chain trust from the key they already pinned.
+3. **Dual-sign one release** — sign the next release with **both** the old and new keys (`.minisig` and `.minisig.new`) so recipients on either key can verify during the overlap window.
+4. **Retire the old key** — after the overlap release, replace `kintsugi.pub` with the new key, update the pinned block in `README.md`, and record the rotation (date, reason, fingerprints — never key material) in the rotation log below.
+5. **If compromised** — skip the overlap; revoke immediately, publish a private disclosure, re-sign the current release with the new key, and treat all releases signed by the compromised key as suspect pending re-verification.
+
+### Rotation log
+
+| Date | Action | Reason | Pub-key fingerprint (not key material) |
+|------|--------|--------|-----------------------------------------|
+| _pending_ | Initial keypair generation | v1.1 signing ceremony | _to be recorded when generated_ |
 
 ## Trust boundary
 
@@ -92,7 +118,7 @@ Include as much as you can:
 | Concern | Channel |
 |---------|---------|
 | Tampered image on NFS mount (v1.0) | Private disclosure first; we'll re-verify via an independent checksum source and revoke the bad release |
-| Suspected compromised signing key (v1.1+) | Private disclosure immediately; key rotation procedure documented in SECURITY.md at that time |
+| Suspected compromised signing key (v1.1+) | Private disclosure immediately; follow the [key rotation procedure](#rotation-procedure) (compromise path — skip the overlap window) |
 | Malicious model slug in `models-recommended.yaml` | Gitea issue with details; we'll pull the entry within the next release |
 | Malicious framework install recipe in `agentic-frameworks-recommended.yaml` | Same as above |
 | Secret accidentally committed to this repo | Private disclosure — we'll force-rewrite history if caught early, rotate the exposed credential, and audit for further leaks |
@@ -107,4 +133,4 @@ Include as much as you can:
 
 ## Updates
 
-This policy evolves. Last updated: 2026-04-20. Next review: when v1.1 signing lands.
+This policy evolves. Last updated: 2026-05-24 (added release-signing-key custody + rotation procedure, issue #19). Next review: when the v1.1 signing keypair is generated.
