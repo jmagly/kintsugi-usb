@@ -1,0 +1,100 @@
+# Kintsugi USB — Recommended Models Manifest
+#
+# Status: DRAFT (initial schema, iteration-1 deliverable per ADR-005)
+# Version: 0.1
+# Updated: 2026-04-20
+#
+# This file lists model slugs the maintainer has tested and recommends.
+# Model WEIGHTS ARE NOT SHIPPED with the distributed Kintsugi image.
+# End-users pull their chosen models via:
+#
+#   kintsugi-models list
+#   kintsugi-models add <slug> [--quant <q>]
+#   kintsugi-models pull <slug>
+#
+# Users may freely add their own slugs via /data/models/user/models.yaml
+# (user manifest). User entries shadow recommendations on slug collision.
+#
+# The maintainer's minisign signature (per ADR-003) attests to THIS file
+# as committed. It does NOT attest to the weights themselves — those carry
+# their source's own integrity story (Ollama registry digest, HuggingFace
+# sha256, or user-supplied checksum).
+#
+# See: .aiwg/architecture/adr-005-toolkit-scope-and-user-driven-models.md
+
+schema_version: 1
+signed_release: true
+
+recommended:
+  # General reasoning / log analysis — default for hosts with <16 GB RAM
+  - slug: "qwen3.5:4b"
+    runtime: ollama
+    source: ollama
+    quant: Q4_K_M
+    sha256: null        # Ollama manages its own digest
+    approx_download_gb: 2.5
+    approx_resident_gb: 3.0
+    purpose: "General reasoning, log analysis. Default for hosts with <16 GB RAM."
+    tested_on: [ref-host-1, ref-host-2]
+    status: recommended
+    notes: ""
+
+  # General reasoning — default for hosts with >=16 GB RAM
+  - slug: "qwen3.5:9b"
+    runtime: ollama
+    source: ollama
+    quant: Q4_K_M
+    sha256: null
+    approx_download_gb: 5.5
+    approx_resident_gb: 6.0
+    purpose: "General reasoning + light code. Default for hosts with >=16 GB RAM."
+    tested_on: [ref-host-1, ref-host-2]
+    status: recommended
+    notes: ""
+
+  # Dedicated coding model — llama.cpp path (direct GGUF, OpenAI-compat :8080)
+  - slug: "Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf"
+    runtime: llama-cpp
+    source: huggingface
+    hf_repo: "bartowski/Qwen2.5-Coder-7B-Instruct-GGUF"
+    hf_file: "Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf"
+    sha256: null        # populated by `kintsugi-models verify` on first add
+    approx_download_gb: 4.7
+    approx_resident_gb: 4.8
+    purpose: "Code generation via llama.cpp (direct GGUF, scriptable, embedded in aider)."
+    tested_on: [ref-host-1, ref-host-2]
+    status: recommended
+    license_note: "Qwen Tongyi Qianwen License — user is responsible for commercial-use threshold compliance. We do not redistribute these weights."
+
+# Future candidates (un-tested; populate status: evaluating when confirmed):
+#
+#   - slug: "phi-4-mini:latest"
+#     runtime: ollama
+#     source: ollama
+#     purpose: "Alternative small-footprint general reasoning"
+#     status: evaluating
+#
+#   - slug: "mistral:7b-instruct"
+#     runtime: ollama
+#     source: ollama
+#     purpose: "Reasoning fallback"
+#     status: evaluating
+
+# --- Schema reference ---
+#
+# Per entry:
+#   slug              (str, required)  — canonical identifier for this model
+#   runtime           (enum, required) — "ollama" | "llama-cpp"
+#   source            (enum, required) — "ollama" | "huggingface" | "url"
+#   quant             (str, optional)  — quantization marker, e.g. Q4_K_M
+#   sha256            (str, optional)  — required if source==url; recommended if source==huggingface
+#   hf_repo           (str, conditional) — required if source==huggingface
+#   hf_file           (str, conditional) — required if source==huggingface
+#   url               (str, conditional) — required if source==url
+#   approx_download_gb (num, optional) — display-only
+#   approx_resident_gb (num, optional) — display-only; used for storage warn/refuse math
+#   purpose           (str, required)
+#   tested_on         (list[str], optional) — fleet host names or environment descriptors
+#   status            (enum, required) — "recommended" | "evaluating" | "deprecated"
+#   license_note      (str, optional)
+#   notes             (str, optional)

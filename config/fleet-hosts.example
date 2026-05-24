@@ -1,0 +1,15 @@
+# Optional fleet /etc/hosts entries for your Kintsugi USB build.
+#
+# The PUBLIC toolkit ships with NO fleet hosts baked in. To bake your own
+# fleet's hostnames into a build (and have first-boot re-add them), create:
+#
+#   config/includes.chroot/etc/kintsugi/fleet-hosts
+#
+# with one "<IP>  <hostname>" per line. That path is git-ignored, so your
+# private topology never lands in the public repo. live-build copies it to
+# /etc/kintsugi/fleet-hosts in the image; build-custom-iso.sh (build time) and
+# first-boot-setup.sh (boot time) append it to /etc/hosts.
+#
+# Example contents (replace with your own):
+# 10.0.0.10  myhost-a
+# 10.0.0.11  myhost-b

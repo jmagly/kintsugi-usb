@@ -1,0 +1,471 @@
+#!/bin/bash
+# kintsugi-frameworks — agentic-framework toolkit for Kintsugi USB (ADR-006 §D2)
+#
+# Subcommands:
+#   list [--installed]              Union view of recommended + user manifests
+#   add <name> [...]                Add a framework to the user manifest (no install)
+#   install <name> [--yes|--dry-run] Run the manifest install_recipe
+#   remove <name>                   Remove from user manifest (manual uninstall per vendor)
+#   verify [<name>|--all]           Check that expected binaries are on PATH
+#   help                            This help
+#
+# Manifests (YAML, schema v1):
+#   Recommended: manifest/agentic-frameworks-recommended.yaml
+#   User:        /data/frameworks/user/frameworks.yaml
+#
+# Trust boundary: this CLI NEVER handles API keys, OAuth tokens, EULA
+# acceptance, or subscription sign-ins. All of that is post-flash user
+# responsibility. See SECURITY.md and ADR-006 §D5 "Auth quirks".
+
+set -euo pipefail
+
+VERSION="0.1.0"
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+
+REPO_ROOT="${KINTSUGI_REPO_ROOT:-}"
+if [ -z "$REPO_ROOT" ]; then
+    for cand in /data/repo/kintsugi-usb /opt/kintsugi-usb; do
+        [ -d "$cand" ] && REPO_ROOT="$cand" && break
+    done
+fi
+if [ -z "$REPO_ROOT" ]; then
+    SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    if [ -f "${SELF_DIR}/../../manifest/agentic-frameworks-recommended.yaml" ]; then
+        REPO_ROOT="$(cd "${SELF_DIR}/../.." && pwd)"
+    fi
+fi
+
+RECOMMENDED_MANIFEST=""
+[ -n "$REPO_ROOT" ] && [ -f "${REPO_ROOT}/manifest/agentic-frameworks-recommended.yaml" ] && \
+    RECOMMENDED_MANIFEST="${REPO_ROOT}/manifest/agentic-frameworks-recommended.yaml"
+
+USER_MANIFEST_DIR="${KINTSUGI_USER_FW_MANIFEST_DIR:-/data/frameworks/user}"
+USER_MANIFEST="${USER_MANIFEST_DIR}/frameworks.yaml"
+
+# ---------------------------------------------------------------------------
+# Output helpers
+# ---------------------------------------------------------------------------
+
+err()  { echo "ERROR: $*" >&2; }
+warn() { echo "WARN:  $*" >&2; }
+info() { echo "$*"; }
+die()  { err "$*"; exit 1; }
+
+# ---------------------------------------------------------------------------
+# Dependencies — mirror kintsugi-models' yq detection
+# ---------------------------------------------------------------------------
+
+require_yq() {
+    if ! command -v yq &>/dev/null; then
+        cat >&2 <<EOF
+ERROR: 'yq' not found.
+
+kintsugi-frameworks requires mikefarah/yq (Go-based). Ubuntu apt ships
+python-yq (Kislyuk) by default, which has incompatible syntax.
+
+Install mikefarah yq:
+  sudo wget -O /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+  sudo chmod +x /usr/local/bin/yq
+EOF
+        exit 1
+    fi
+    if ! yq --version 2>&1 | grep -qi "mikefarah"; then
+        cat >&2 <<EOF
+ERROR: wrong 'yq' detected.
+
+Found: $(yq --version 2>&1 | head -1)
+
+kintsugi-frameworks requires mikefarah/yq. Install:
+  sudo wget -O /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+  sudo chmod +x /usr/local/bin/yq
+EOF
+        exit 1
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Manifest operations
+# ---------------------------------------------------------------------------
+
+ensure_user_manifest() {
+    if [ ! -f "$USER_MANIFEST" ]; then
+        mkdir -p "$USER_MANIFEST_DIR"
+        cat > "$USER_MANIFEST" <<'YAML_EOF'
+# User framework manifest — edits shadow manifest/agentic-frameworks-recommended.yaml
+# on name collision. See that file for schema reference.
+schema_version: 1
+signed_release: false
+recommended: []
+YAML_EOF
+        info "Created $USER_MANIFEST"
+    fi
+}
+
+manifest_entry_for_name() {
+    local name=$1
+    require_yq
+    if [ -f "$USER_MANIFEST" ]; then
+        local hit
+        hit=$(yq eval ".recommended[] | select(.name == \"$name\")" "$USER_MANIFEST" 2>/dev/null)
+        if [ -n "$hit" ] && [ "$hit" != "null" ]; then
+            echo "$hit"
+            return 0
+        fi
+    fi
+    if [ -n "$RECOMMENDED_MANIFEST" ]; then
+        local hit
+        hit=$(yq eval ".recommended[] | select(.name == \"$name\")" "$RECOMMENDED_MANIFEST" 2>/dev/null)
+        if [ -n "$hit" ] && [ "$hit" != "null" ]; then
+            echo "$hit"
+            return 0
+        fi
+    fi
+    return 1
+}
+
+# Map a framework name → the binary/extension that proves it's installed.
+# Where multiple binaries could match, use the most canonical.
+# continue-dev is a VS Code extension, not a CLI — check differently.
+expected_check() {
+    local name=$1
+    case "$name" in
+        aider)         echo "cli:aider" ;;
+        claude-code)   echo "cli:claude" ;;
+        codex-cli)     echo "cli:codex" ;;
+        cursor)        echo "cli:cursor" ;;
+        windsurf)      echo "cli:windsurf" ;;
+        warp)          echo "cli:warp-terminal" ;;
+        opencode)      echo "cli:opencode" ;;
+        factory)       echo "cli:factory" ;;
+        continue-dev)  echo "vscode-ext:Continue.continue" ;;
+        *)             echo "cli:$name" ;;
+    esac
+}
+
+is_installed() {
+    local name=$1
+    local check
+    check=$(expected_check "$name")
+    local kind="${check%%:*}"
+    local ident="${check#*:}"
+    case "$kind" in
+        cli) command -v "$ident" &>/dev/null ;;
+        vscode-ext)
+            command -v code &>/dev/null || return 1
+            code --list-extensions 2>/dev/null | grep -qi "^${ident}$"
+            ;;
+        *) return 1 ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------
+# Subcommands
+# ---------------------------------------------------------------------------
+
+cmd_help() {
+    sed -n '2,21p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'
+    cat <<EOF
+
+Examples:
+  kintsugi-frameworks list
+  kintsugi-frameworks list --installed
+  kintsugi-frameworks install aider
+  kintsugi-frameworks install claude-code --yes
+  kintsugi-frameworks install aider --dry-run
+  kintsugi-frameworks verify --all
+  kintsugi-frameworks add my-custom-cli --install-method curl-bash
+
+Environment:
+  KINTSUGI_REPO_ROOT               Override repo root
+  KINTSUGI_USER_FW_MANIFEST_DIR    User manifest dir (default /data/frameworks/user)
+
+Auth: this CLI NEVER handles API keys, OAuth tokens, or EULA acceptance.
+Those are always post-flash user responsibility per ADR-006.
+
+Version: ${VERSION}
+EOF
+}
+
+cmd_list() {
+    local installed_only=0
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --installed) installed_only=1; shift ;;
+            *) die "Unknown flag for list: $1" ;;
+        esac
+    done
+
+    require_yq
+
+    printf "%-16s %-10s %-13s %-16s %-12s %s\n" "NAME" "STATUS" "INSTALL" "AUTH" "INSTALLED?" "LICENSE"
+    printf "%s\n" "$(printf '%.0s-' {1..100})"
+
+    local seen_names=""
+    _emit_row() {
+        local name=$1 status=$2 install=$3 auth=$4 license=$5 from=$6
+        local inst="no"
+        is_installed "$name" && inst="yes"
+        if [ "$installed_only" = "1" ] && [ "$inst" != "yes" ]; then
+            return 0
+        fi
+        printf "%-16s %-10s %-13s %-16s %-12s %s%s\n" \
+            "$name" "$status" "$install" "$auth" "$inst" "$license" \
+            "$( [ "$from" = "user-only" ] && echo "  [user]" )"
+    }
+
+    if [ -n "$RECOMMENDED_MANIFEST" ]; then
+        while IFS=$'\t' read -r name status install_method auth license; do
+            [ -z "$name" ] && continue
+            seen_names="${seen_names} ${name}"
+            _emit_row "$name" "$status" "$install_method" "$auth" "$license" "recommended"
+        done < <(yq eval '.recommended[] | [.name, .status, .install_method, .auth_model, .license] | @tsv' "$RECOMMENDED_MANIFEST" 2>/dev/null)
+    fi
+
+    if [ -f "$USER_MANIFEST" ]; then
+        while IFS=$'\t' read -r name status install_method auth license; do
+            [ -z "$name" ] && continue
+            if echo " $seen_names " | grep -q " $name "; then
+                continue
+            fi
+            _emit_row "$name" "${status:-user}" "${install_method:-?}" "${auth:-?}" "${license:-?}" "user-only"
+        done < <(yq eval '.recommended[] | [.name, .status, .install_method, .auth_model, .license] | @tsv' "$USER_MANIFEST" 2>/dev/null)
+    fi
+}
+
+cmd_add() {
+    [ $# -lt 1 ] && die "Usage: kintsugi-frameworks add <name> [--kind K] [--install-method M] [--license L]"
+    local name=$1; shift
+    local kind="cli" install_method="manual" license="unknown"
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --kind)           kind=$2; shift 2 ;;
+            --install-method) install_method=$2; shift 2 ;;
+            --license)        license=$2; shift 2 ;;
+            *) die "Unknown flag for add: $1" ;;
+        esac
+    done
+
+    ensure_user_manifest
+    require_yq
+
+    if yq eval ".recommended[] | select(.name == \"$name\") | .name" "$USER_MANIFEST" 2>/dev/null | grep -q .; then
+        warn "Framework '$name' already in user manifest. Not modified."
+        return 0
+    fi
+
+    local entry
+    entry=$(cat <<YAML
+name: "$name"
+display_name: "$name"
+vendor: "user-supplied"
+license: "$license"
+kind: $kind
+install_method: $install_method
+install_recipe: "# User must provide an install recipe for $name"
+auth_model: "unknown"
+runtime_dependency: "unknown"
+status: user
+YAML
+    )
+    yq eval ".recommended += [$(echo "$entry" | yq eval -o=json -I=0)]" -i "$USER_MANIFEST"
+    info "Added '$name' to $USER_MANIFEST"
+    info "NOTE: set install_recipe in $USER_MANIFEST before running 'install $name'."
+}
+
+cmd_install() {
+    [ $# -lt 1 ] && die "Usage: kintsugi-frameworks install <name> [--yes] [--dry-run]"
+    local name=$1; shift
+    local auto_yes=0
+    local dry_run=0
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --yes|-y)  auto_yes=1; shift ;;
+            --dry-run) dry_run=1; shift ;;
+            *) die "Unknown flag for install: $1" ;;
+        esac
+    done
+
+    local entry
+    if ! entry=$(manifest_entry_for_name "$name"); then
+        die "Framework '$name' not in any manifest. Use 'add' first, or check 'list'."
+    fi
+    require_yq
+
+    local status install_method install_recipe auth license vendor
+    status=$(echo "$entry"         | yq eval '.status // "?"' -)
+    install_method=$(echo "$entry" | yq eval '.install_method // "?"' -)
+    install_recipe=$(echo "$entry" | yq eval '.install_recipe // ""' -)
+    auth=$(echo "$entry"           | yq eval '.auth_model // "unknown"' -)
+    license=$(echo "$entry"        | yq eval '.license // "unknown"' -)
+    vendor=$(echo "$entry"         | yq eval '.vendor // "unknown"' -)
+
+    if [ -z "$install_recipe" ] || [ "$install_recipe" = "null" ]; then
+        die "No install_recipe for '$name'. Edit the manifest first."
+    fi
+
+    # Non-recommended gates: user-added (status=user) or evaluating slugs need --yes.
+    if [ "$status" != "recommended" ] && [ "$auto_yes" != "1" ]; then
+        cat <<EOF
+Framework '$name' has status '$status'.
+The maintainer has not tested this in the v1.0 ship set. Re-run with --yes to proceed.
+
+  Vendor:      $vendor
+  License:     $license
+  Install:     $install_method
+  Auth model:  $auth
+
+Trust boundary: this CLI will run the install recipe you see below, but does
+NOT attest to the vendor's binary, EULA, or auth flow. You are the trust
+anchor once --yes is passed.
+EOF
+        return 2
+    fi
+
+    # Print the recipe before executing, per R-17-analog trust boundary.
+    cat <<EOF
+About to install: $name (status=$status, vendor=$vendor, license=$license)
+Auth model:       $auth   (post-flash user responsibility — NOT handled here)
+Install method:   $install_method
+
+--- install_recipe ---
+$install_recipe
+--- end recipe ---
+
+EOF
+
+    if [ "$dry_run" = "1" ]; then
+        info "Dry run — not executing. Re-run without --dry-run to apply."
+        return 0
+    fi
+
+    # Detect root for recipes that clearly require apt/privileged writes.
+    if echo "$install_recipe" | grep -qE '\b(apt-get|dpkg|install\s+-d)\b' && [ "$(id -u)" -ne 0 ]; then
+        cat <<EOF
+WARN: install_recipe contains apt/dpkg/install commands that typically require root.
+      Re-run with sudo, or the recipe will likely fail.
+
+Proceeding anyway (recipe may partially succeed for user-scoped steps)...
+EOF
+    fi
+
+    # Execute the recipe in a transactional subshell.
+    local tmp
+    tmp=$(mktemp --suffix=.sh)
+    {
+        echo "#!/bin/bash"
+        echo "set -euo pipefail"
+        echo "$install_recipe"
+    } > "$tmp"
+    chmod +x "$tmp"
+
+    info "Executing recipe in transactional subshell..."
+    if bash "$tmp"; then
+        rm -f "$tmp"
+        info ""
+        info "Install complete: $name"
+        if is_installed "$name"; then
+            info "Verified present (expected_check: $(expected_check "$name"))"
+        else
+            warn "Could not verify '$name' via expected_check — install may have succeeded"
+            warn "but the binary isn't on PATH yet. Try: source ~/.bashrc   or reopen shell."
+        fi
+        info ""
+        info "IMPORTANT: $auth — complete authentication AFTER flashing / booting the USB."
+        info "This CLI will not and cannot store credentials in your image."
+        return 0
+    else
+        local rc=$?
+        rm -f "$tmp"
+        err "Install FAILED for '$name' (exit $rc). The installer above reports the cause."
+        err "Your image may be in a partial state — inspect and rerun, or 'remove $name' to drop from manifest."
+        return 1
+    fi
+}
+
+cmd_remove() {
+    [ $# -lt 1 ] && die "Usage: kintsugi-frameworks remove <name>"
+    local name=$1; shift
+
+    require_yq
+
+    if [ -f "$USER_MANIFEST" ] && yq eval ".recommended[] | select(.name == \"$name\") | .name" "$USER_MANIFEST" 2>/dev/null | grep -q .; then
+        yq eval "del(.recommended[] | select(.name == \"$name\"))" -i "$USER_MANIFEST"
+        info "Removed '$name' from user manifest"
+    else
+        warn "Framework '$name' not in user manifest (recommended entries can only be shadowed, not removed — use 'add' to override)"
+    fi
+
+    # Uninstallation varies per vendor; provide hints.
+    local entry install_method
+    if entry=$(manifest_entry_for_name "$name" 2>/dev/null); then
+        install_method=$(echo "$entry" | yq eval '.install_method // "?"' -)
+        case "$install_method" in
+            pip)         info "To uninstall the binary: pipx uninstall $name  (or pip uninstall)" ;;
+            npm)         info "To uninstall the binary: npm uninstall -g $name" ;;
+            apt-deb)     info "To uninstall the binary: sudo apt-get remove -y $name" ;;
+            curl-bash)   info "To uninstall the binary: consult $name's vendor docs — curl-bash installers vary" ;;
+            marketplace) info "To uninstall the VS Code extension: code --uninstall-extension <id>" ;;
+            *)           info "To uninstall the binary: consult $name's vendor docs" ;;
+        esac
+    fi
+}
+
+cmd_verify() {
+    local target="${1:-}"
+    require_yq
+
+    local names=()
+    if [ -z "$target" ] || [ "$target" = "--all" ]; then
+        while IFS= read -r n; do
+            [ -n "$n" ] && names+=("$n")
+        done < <(
+            {
+                [ -f "$USER_MANIFEST" ] && yq eval '.recommended[]? | .name' "$USER_MANIFEST" 2>/dev/null
+                [ -n "$RECOMMENDED_MANIFEST" ] && yq eval '.recommended[]? | .name' "$RECOMMENDED_MANIFEST" 2>/dev/null
+            } | awk 'NF && !seen[$0]++'
+        )
+    else
+        names=("$target")
+    fi
+
+    [ ${#names[@]} -eq 0 ] && { info "No frameworks in manifests."; return 0; }
+
+    local fail=0
+    for name in "${names[@]}"; do
+        local check
+        check=$(expected_check "$name")
+        if is_installed "$name"; then
+            info "$name: OK  (check=$check)"
+        else
+            warn "$name: NOT INSTALLED  (check=$check)"
+            fail=1
+        fi
+    done
+    return "$fail"
+}
+
+# ---------------------------------------------------------------------------
+# Main dispatch
+# ---------------------------------------------------------------------------
+
+main() {
+    [ $# -lt 1 ] && { cmd_help; exit 0; }
+    local sub=$1; shift
+    case "$sub" in
+        list)    cmd_list "$@" ;;
+        add)     cmd_add "$@" ;;
+        install) cmd_install "$@" ;;
+        remove)  cmd_remove "$@" ;;
+        verify)  cmd_verify "$@" ;;
+        help|-h|--help)  cmd_help ;;
+        version|--version) echo "kintsugi-frameworks ${VERSION}" ;;
+        *) err "Unknown subcommand: $sub"; cmd_help; exit 2 ;;
+    esac
+}
+
+main "$@"

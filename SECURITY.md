@@ -1,0 +1,110 @@
+# Security Policy — Kintsugi USB
+
+## Scope
+
+This document covers the security posture of the Kintsugi USB project: what we attest to, what we don't, and how to report concerns.
+
+**This is a community rescue-USB toolkit, not a commercial product.** Response is best-effort by a solo maintainer. There is no paid support, no formal SLA, and no bounty program. Reports are welcome and will be taken seriously.
+
+## Supported versions
+
+Only the most recent tagged release receives security fixes. Older releases are historical. The wizard-first build model means most users run their own custom builds — those are not "versions" we maintain.
+
+| Version line | Status |
+|--------------|--------|
+| `main` branch | Development; most recent changes, pre-release |
+| Latest tagged release (`v1.0.x` when it ships) | Security fixes applied |
+| Earlier tags | Not maintained; upgrade to latest |
+
+## Verification — what v1.0 provides
+
+For v1.0, any maintainer-produced images (published to the warehouse NFS mount per [ADR-006 §D4](.aiwg/architecture/adr-006-wizard-first-ux-and-user-driven-agentic-frameworks.md)) ship with a **SHA-256 checksum** alongside the image file. Recipients verify integrity with:
+
+```bash
+# Linux / macOS
+shasum -a 256 -c kintsugi-vX.Y.Z.img.zst.sha256
+
+# Windows PowerShell
+Get-FileHash kintsugi-vX.Y.Z.img.zst -Algorithm SHA256
+```
+
+SHA-256 protects against **accidental corruption in transit**. It does **not**, on its own, protect against malicious substitution if an attacker can modify both the image and the checksum on the host serving them.
+
+### Signing lands in v1.1
+
+A full cryptographic signing flow (minisign, Ed25519) is scheduled for v1.1. At that point:
+
+- Every release artifact will carry a `.minisig` signature
+- The maintainer's public key `kintsugi.pub` will be committed to this repo and pinned in `README.md`
+- `scripts/verify-release.sh` will wrap the sha256 + minisign verification in a single command
+- `docs/flash-image.md` will gain per-OS one-liners for the full verify flow
+
+This deferral is an explicit trade-off to let iteration-1 focus on the build toolkit (the wizard is the product). See [ADR-003](.aiwg/architecture/adr-003-verification-rigor.md) (amended) and [ADR-006 §D5](.aiwg/architecture/adr-006-wizard-first-ux-and-user-driven-agentic-frameworks.md).
+
+## Trust boundary
+
+### What the maintainer's release (v1.1+: signature) attests to
+
+- The **base image** produced by `scripts/publish-release.sh` at tag time
+- The **scripts** and **docs** as committed in the tagged git release
+- `manifest/models-recommended.yaml` and `manifest/agentic-frameworks-recommended.yaml` **as committed**
+
+### What the maintainer does NOT attest to
+
+- **Model weights** — user-fetched via `kintsugi-models pull`. Carry the source's own integrity story (Ollama registry digest, HuggingFace sha256, or user-supplied checksum). See `manifest/models-recommended.yaml` for the recommended list; anything outside it is entirely user-owned.
+- **Agentic framework binaries** — user-fetched via `kintsugi-frameworks install`. Carry their vendors' own signing / install-verification.
+- **User-pulled anything else** — the wizard's "Other" options and any `--custom-slug` invocations bypass the recommended list; you're the trust anchor for those choices.
+- **Your downstream fork** — if you fork this toolkit to build your own distribution, sign with your own key. Don't claim the maintainer's signature.
+
+This boundary is described in more detail in [`manifest/THIRD-PARTY-LICENSES.md`](manifest/THIRD-PARTY-LICENSES.md) and [`docs/toolkit-guide.md`](docs/toolkit-guide.md).
+
+## Reporting a security concern
+
+### Preferred: Gitea issue (for non-sensitive reports)
+
+For bugs, misconfigurations, doc errors, or observations that would benefit from public visibility: https://git.integrolabs.net/roctinam/kintsugi-usb/issues — label with `security` if appropriate.
+
+### Private disclosure (for sensitive reports)
+
+If the issue is sensitive — a suspected tampered image, a compromised credential, evidence of maliciously-modified scripts, a key compromise — contact the maintainer directly:
+
+- **Email**: via GitHub profile for `roctinam` (pgp key on keyserver if available)
+- **Gitea DM**: via https://git.integrolabs.net/roctinam
+
+### What to report
+
+Include as much as you can:
+
+- Which release or build (git commit hash, wizard profile if available)
+- What you observed (error, suspicious behavior, checksum mismatch, install failure)
+- How you observed it (commands run, network conditions, host type)
+- Any captured evidence (log snippets, stderr, harness output)
+
+### What to expect
+
+- Acknowledgement within a reasonable best-effort window (this is a solo-maintained project — days, not hours)
+- If the report is valid and sensitive, coordinated disclosure: fix first, public advisory later
+- If the report is valid and non-sensitive: a Gitea issue and a fix in the next tagged release
+- Credit at your discretion — we're happy to thank reporters publicly or keep reports anonymous
+
+## Specific reporting channels by concern type
+
+| Concern | Channel |
+|---------|---------|
+| Tampered image on NFS mount (v1.0) | Private disclosure first; we'll re-verify via an independent checksum source and revoke the bad release |
+| Suspected compromised signing key (v1.1+) | Private disclosure immediately; key rotation procedure documented in SECURITY.md at that time |
+| Malicious model slug in `models-recommended.yaml` | Gitea issue with details; we'll pull the entry within the next release |
+| Malicious framework install recipe in `agentic-frameworks-recommended.yaml` | Same as above |
+| Secret accidentally committed to this repo | Private disclosure — we'll force-rewrite history if caught early, rotate the exposed credential, and audit for further leaks |
+| Vulnerability in bundled third-party binary | Report to the upstream project first (Ventoy, llama.cpp, Ollama, Ubuntu, etc.); let us know if we should pin an older version |
+
+## Related
+
+- [ADR-003 — Release Verification Rigor (amended — v1.0 sha256 only; v1.1+ full signing)](.aiwg/architecture/adr-003-verification-rigor.md)
+- [ADR-005 — Toolkit scope + user-driven models](.aiwg/architecture/adr-005-toolkit-scope-and-user-driven-models.md)
+- [ADR-006 — Wizard-first UX + user-driven agentic frameworks + signing deferred](.aiwg/architecture/adr-006-wizard-first-ux-and-user-driven-agentic-frameworks.md)
+- [Risk register](.aiwg/risks/risk-list.md) — R-02 (supply-chain provenance), R-07 (secrets in repo), R-17 (malicious user-pulled slug), R-19 (VS Code telemetry), R-20 (Copilot subscription dependency)
+
+## Updates
+
+This policy evolves. Last updated: 2026-04-20. Next review: when v1.1 signing lands.

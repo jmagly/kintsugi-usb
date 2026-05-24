@@ -1,0 +1,247 @@
+# Kintsugi USB — Recommended Agentic Frameworks Manifest
+#
+# Status: DRAFT (initial schema, iteration-1 deliverable per ADR-006 §D2)
+# Version: 0.1
+# Updated: 2026-04-20
+#
+# This file lists agentic-framework (AI coding assistant / agent CLI / IDE)
+# slugs the maintainer has evaluated and recommends. Framework BINARIES ARE
+# NOT SHIPPED with the distributed Kintsugi image. End-users select which
+# frameworks they want during the `kintsugi-build` wizard, and the toolkit
+# fetches + installs them into the master image at build time:
+#
+#   kintsugi-frameworks list
+#   kintsugi-frameworks add <name>
+#   kintsugi-frameworks install <name>
+#   kintsugi-frameworks verify <name>
+#
+# Users may freely add their own entries via /data/frameworks/user/frameworks.yaml
+# on the persistence overlay (user manifest). User entries shadow recommendations
+# on name collision.
+#
+# ## Trust boundary
+#
+# The maintainer's minisign signature (per ADR-003, arriving in v1.1) attests
+# to THIS file as committed. It does NOT attest to the framework binaries,
+# installer scripts, EULAs, or cloud services those frameworks depend on.
+# Each framework carries its own supply-chain story (vendor signature, npm
+# integrity, apt repo GPG key, VS Code marketplace signature, etc.).
+#
+# ## Auth quirks (IMPORTANT)
+#
+# The toolkit installs framework BINARIES only. It NEVER handles:
+#   - API keys (OpenAI, Anthropic, etc.)
+#   - OAuth tokens (GitHub, Cursor account, Factory account)
+#   - EULA acceptance prompts
+#   - Subscription sign-ins (Claude Pro, Copilot, Cursor Pro, Warp, etc.)
+#
+# All of the above are POST-FLASH USER RESPONSIBILITY. The wizard documents
+# this for each framework at install time; the user authenticates after
+# booting the flashed USB on their target hardware. Rationale: API keys and
+# auth tokens MUST NOT be baked into a distributable image — that would leak
+# credentials to every recipient of the image.
+#
+# See: .aiwg/architecture/adr-006-wizard-first-ux-and-user-driven-agentic-frameworks.md
+
+schema_version: 1
+signed_release: true
+
+recommended:
+  # --- v1.0 SHIP SET (3 frameworks per ADR-006 Open Question #4) ---
+
+  - name: "aider"
+    display_name: "Aider"
+    vendor: "Paul Gauthier / Aider Community"
+    license: "Apache-2.0"
+    kind: "cli"
+    install_method: "pip"
+    install_recipe: |
+      # Aider via pipx (isolates Python deps from system site-packages)
+      apt-get install -y pipx python3-venv
+      pipx install aider-chat
+      pipx ensurepath
+      # User configures ~/.aider.conf.yml with model preferences post-install.
+      # Aider can talk to local llama-server / Ollama (BYO endpoint) or
+      # cloud APIs (OpenAI, Anthropic) — BYO API key either way.
+    auth_model: "byo-api-key"
+    runtime_dependency: "llama-server | ollama | cloud-api-openai | cloud-api-anthropic"
+    status: recommended
+    v1.0_ship_decision: true
+    notes: "Pairs well with llama.cpp (local, offline) or Ollama. No account required; BYO key for cloud models. FOSS, maximally fork-friendly."
+
+  - name: "claude-code"
+    display_name: "Claude Code"
+    vendor: "Anthropic"
+    license: "proprietary (EULA)"
+    kind: "cli"
+    install_method: "curl-bash"
+    install_recipe: |
+      # Claude Code official installer
+      # [confirm current install URL before v1.0 release]
+      curl -fsSL https://claude.ai/install.sh | bash
+      # Installer drops `claude` binary into /usr/local/bin or ~/.local/bin.
+      # User runs `claude login` post-flash to authenticate (Anthropic account
+      # + Claude Pro/Max subscription or Anthropic API key).
+    auth_model: "subscription-signin"
+    runtime_dependency: "cloud-api-anthropic"
+    status: recommended
+    v1.0_ship_decision: true
+    notes: "Anthropic EULA applies. Requires network + Anthropic account post-flash. Installer URL to be confirmed at v1.0 cut; placeholder above."
+
+  - name: "codex-cli"
+    display_name: "Codex CLI"
+    vendor: "OpenAI"
+    license: "proprietary (EULA)"
+    kind: "cli"
+    install_method: "npm"
+    install_recipe: |
+      # Codex CLI via npm (OpenAI official distribution)
+      # [confirm current install pattern before v1.0 release]
+      apt-get install -y nodejs npm
+      npm install -g @openai/codex
+      # User runs `codex login` or sets OPENAI_API_KEY post-flash.
+    auth_model: "EULA+API-key"
+    runtime_dependency: "cloud-api-openai"
+    status: recommended
+    v1.0_ship_decision: true
+    notes: "OpenAI EULA applies. BYO OpenAI API key post-flash. Install pattern to be confirmed at v1.0 cut."
+
+  # --- v1.1+ EVALUATING SET (expand menu in iteration-2+) ---
+
+  - name: "cursor"
+    display_name: "Cursor"
+    vendor: "Anysphere"
+    license: "proprietary"
+    kind: "ide"
+    install_method: "apt-deb"
+    install_recipe: |
+      # Cursor distributed as .deb (or AppImage). Fetch latest from cursor.com.
+      # [confirm current download URL pattern before enabling in wizard]
+      CURSOR_DEB_URL="https://downloader.cursor.sh/linux/appImage/x64"
+      curl -fsSL -o /tmp/cursor.AppImage "$CURSOR_DEB_URL"
+      chmod +x /tmp/cursor.AppImage
+      mv /tmp/cursor.AppImage /usr/local/bin/cursor
+      # User launches `cursor`, signs in post-flash (Cursor account + subscription).
+    auth_model: "subscription-signin"
+    runtime_dependency: "cloud-api-anthropic | cloud-api-openai"
+    status: evaluating
+    v1.0_ship_decision: false
+    notes: "Proprietary IDE (VS Code fork). Download URL stable but version-less; consider pinning. Sign-in post-flash required for AI features."
+
+  - name: "windsurf"
+    display_name: "Windsurf"
+    vendor: "Codeium"
+    license: "proprietary"
+    kind: "ide"
+    install_method: "apt-deb"
+    install_recipe: |
+      # Windsurf distributed as .deb from codeium.com.
+      # [confirm current download URL pattern before enabling in wizard]
+      WINDSURF_DEB_URL="https://windsurf-stable.codeiumdata.com/linux-x64-deb/stable/latest/windsurf.deb"
+      curl -fsSL -o /tmp/windsurf.deb "$WINDSURF_DEB_URL"
+      apt-get install -y /tmp/windsurf.deb
+      # User signs in post-flash with Codeium/Windsurf account.
+    auth_model: "subscription-signin"
+    runtime_dependency: "cloud-api-anthropic | cloud-api-openai"
+    status: evaluating
+    v1.0_ship_decision: false
+    notes: "Proprietary IDE (VS Code fork) from Codeium. Free tier available; paid tier for heavier models."
+
+  - name: "warp"
+    display_name: "Warp"
+    vendor: "Warp Technologies"
+    license: "proprietary"
+    kind: "terminal"
+    install_method: "apt-deb"
+    install_recipe: |
+      # Warp distributed via its own apt repository.
+      # [confirm current repo setup before enabling in wizard]
+      curl -fsSL https://releases.warp.dev/linux/keys/warp.asc \
+        | gpg --dearmor -o /usr/share/keyrings/warp.gpg
+      echo "deb [signed-by=/usr/share/keyrings/warp.gpg] https://releases.warp.dev/linux/deb stable main" \
+        > /etc/apt/sources.list.d/warp.list
+      apt-get update && apt-get install -y warp-terminal
+      # User signs in post-flash with Warp account.
+    auth_model: "subscription-signin"
+    runtime_dependency: "cloud-api-openai | cloud-api-anthropic"
+    status: evaluating
+    v1.0_ship_decision: false
+    notes: "AI-native terminal. Requires Warp account for AI features; terminal itself works without auth."
+
+  - name: "opencode"
+    display_name: "OpenCode"
+    vendor: "OpenCode Community"
+    license: "MIT"
+    kind: "cli"
+    install_method: "curl-bash"
+    install_recipe: |
+      # OpenCode — open-source agentic CLI.
+      # [confirm current install pattern before enabling in wizard]
+      curl -fsSL https://opencode.ai/install | bash
+      # BYO API key (OpenAI, Anthropic) or point at local llama-server/Ollama.
+    auth_model: "byo-api-key"
+    runtime_dependency: "llama-server | ollama | cloud-api-openai | cloud-api-anthropic"
+    status: evaluating
+    v1.0_ship_decision: false
+    notes: "FOSS alternative to Claude Code / Codex CLI. Broad model support. Install URL to be confirmed."
+
+  - name: "factory"
+    display_name: "Factory"
+    vendor: "Factory AI"
+    license: "proprietary"
+    kind: "cli"
+    install_method: "curl-bash"
+    install_recipe: |
+      # Factory CLI (droid).
+      # [confirm current install pattern before enabling in wizard]
+      curl -fsSL https://app.factory.ai/cli | bash
+      # User signs in post-flash with Factory account.
+    auth_model: "subscription-signin"
+    runtime_dependency: "cloud-api-anthropic | cloud-api-openai"
+    status: evaluating
+    v1.0_ship_decision: false
+    notes: "Proprietary agentic coding platform. Requires Factory account; paid tiers for heavier usage."
+
+  - name: "continue-dev"
+    display_name: "Continue.dev"
+    vendor: "Continue.dev"
+    license: "Apache-2.0"
+    kind: "vscode-extension"
+    install_method: "marketplace"
+    install_recipe: |
+      # Continue.dev — FOSS AI coding extension for VS Code.
+      # Install into the preinstalled VS Code (see ADR-006 §D3).
+      code --install-extension Continue.continue --force
+      # User configures ~/.continue/config.json post-flash with model endpoints
+      # (local llama-server/Ollama or BYO cloud API key).
+    auth_model: "byo-api-key"
+    runtime_dependency: "llama-server | ollama | cloud-api-openai | cloud-api-anthropic"
+    status: evaluating
+    v1.0_ship_decision: false
+    notes: "Requires VS Code (installed by default per ADR-006 §D3). FOSS; no account required; BYO model endpoint."
+
+# User overrides
+#
+# Users add their own framework entries on the persistence overlay at:
+#   /data/frameworks/user/frameworks.yaml
+#
+# Same schema as this file; user entries shadow recommendations on `name`
+# collision. Use this to pin a specific version, override an install recipe
+# for an offline environment, or add frameworks the maintainer has not
+# evaluated.
+
+# --- Schema reference ---
+#
+# Per entry:
+#   name                  (str, required)  — canonical short identifier, lowercase-hyphenated
+#   display_name          (str, required)  — human-readable name
+#   vendor                (str, required)  — maker/publisher
+#   license               (str, required)  — SPDX identifier | "proprietary" | "proprietary (EULA)"
+#   kind                  (enum, required) — "cli" | "ide" | "terminal" | "vscode-extension"
+#   install_method        (enum, required) — "pip" | "npm" | "curl-bash" | "apt-deb" | "flatpak" | "marketplace" | "manual"
+#   install_recipe        (str, required)  — concrete multi-line bash the wizard's kintsugi-frameworks will run
+#   auth_model            (enum, required) — "byo-api-key" | "subscription-signin" | "oauth-github" | "EULA+API-key" | "none"
+#   runtime_dependency    (str, required)  — what backend the framework talks to (pipe-separated alternatives)
+#   status                (enum, required) — "recommended" | "evaluating" | "deprecated"
+#   v1.0_ship_decision    (bool, required) — true if included in v1.0 wizard menu; false if gated to v1.1+
+#   notes                 (str, optional)  — auth quirks, GPU requirements, known issues, confirm-before-ship flags

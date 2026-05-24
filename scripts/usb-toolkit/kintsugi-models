@@ -1,0 +1,553 @@
+#!/bin/bash
+# kintsugi-models — user-driven model management for Kintsugi USB (ADR-005 §D3)
+#
+# Subcommands:
+#   list [--sizes]                  Union view of recommended + user manifests
+#   add <slug> [...]                Add a slug to the user manifest (no download)
+#   pull <slug> [--target PATH]     Download model weights (Ollama or HuggingFace)
+#   remove <slug> [--delete-weights] Remove from user manifest (and optionally delete)
+#   verify [<slug>|--all]           Check sha256 against manifest entries
+#   help                            This help
+#
+# Manifests (YAML, schema v1):
+#   Recommended (maintainer-signed): manifest/models-recommended.yaml in repo
+#   User (writable):                 /data/models/user/models.yaml on persistence
+#
+# Trust boundary: this CLI prints source URL + digest before every download.
+# The maintainer does NOT attest to downloaded weights — only to the
+# recommended manifest as committed. See SECURITY.md and ADR-005 §D5.
+
+set -euo pipefail
+
+VERSION="0.1.0"
+
+# ---------------------------------------------------------------------------
+# Paths (discoverable via env override or search chain)
+# ---------------------------------------------------------------------------
+
+REPO_ROOT="${KINTSUGI_REPO_ROOT:-}"
+if [ -z "$REPO_ROOT" ]; then
+    for cand in /data/repo/kintsugi-usb /opt/kintsugi-usb; do
+        [ -d "$cand" ] && REPO_ROOT="$cand" && break
+    done
+fi
+# Script-relative fallback (useful during dev + at build time on the maintainer's host)
+if [ -z "$REPO_ROOT" ]; then
+    SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    if [ -f "${SELF_DIR}/../../manifest/models-recommended.yaml" ]; then
+        REPO_ROOT="$(cd "${SELF_DIR}/../.." && pwd)"
+    fi
+fi
+
+RECOMMENDED_MANIFEST=""
+[ -n "$REPO_ROOT" ] && [ -f "${REPO_ROOT}/manifest/models-recommended.yaml" ] && \
+    RECOMMENDED_MANIFEST="${REPO_ROOT}/manifest/models-recommended.yaml"
+
+USER_MANIFEST_DIR="${KINTSUGI_USER_MANIFEST_DIR:-/data/models/user}"
+USER_MANIFEST="${USER_MANIFEST_DIR}/models.yaml"
+
+# Default download target for pull at boot time.
+DEFAULT_USER_MODELS_DIR="${KINTSUGI_USER_MODELS_DIR:-/data/models/user}"
+
+# Storage thresholds per NFR-11.3.
+STORAGE_WARN_PCT="${KINTSUGI_STORAGE_WARN_PCT:-80}"
+STORAGE_REFUSE_PCT="${KINTSUGI_STORAGE_REFUSE_PCT:-95}"
+
+# ---------------------------------------------------------------------------
+# Output helpers
+# ---------------------------------------------------------------------------
+
+err()  { echo "ERROR: $*" >&2; }
+warn() { echo "WARN:  $*" >&2; }
+info() { echo "$*"; }
+die()  { err "$*"; exit 1; }
+
+# ---------------------------------------------------------------------------
+# Dependencies
+# ---------------------------------------------------------------------------
+
+require_yq() {
+    if ! command -v yq &>/dev/null; then
+        cat >&2 <<EOF
+ERROR: 'yq' not found.
+
+kintsugi-models requires mikefarah/yq (Go-based). Ubuntu apt ships python-yq
+(Kislyuk) by default, which has incompatible jq-based syntax and will NOT work
+with this CLI.
+
+Install mikefarah yq:
+  sudo wget -O /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+  sudo chmod +x /usr/local/bin/yq
+
+On the built Kintsugi ISO, mikefarah yq is installed by the 06-install-yq
+hook in build-custom-iso.sh.
+EOF
+        exit 1
+    fi
+    # Detect python-yq (Kislyuk) — returns "yq <version> (jq wrapper ...)"
+    # vs. mikefarah yq — returns "yq (https://github.com/mikefarah/yq/) version vX.Y.Z"
+    if ! yq --version 2>&1 | grep -qi "mikefarah"; then
+        cat >&2 <<EOF
+ERROR: wrong 'yq' detected.
+
+Found: $(yq --version 2>&1 | head -1)
+
+kintsugi-models requires mikefarah/yq (Go-based), not python-yq (Kislyuk).
+Install mikefarah yq (the Ubuntu 'yq' apt package is the wrong one):
+
+  sudo wget -O /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+  sudo chmod +x /usr/local/bin/yq
+
+\$PATH check: /usr/local/bin should precede /usr/bin so the downloaded
+binary shadows the apt-installed one.
+EOF
+        exit 1
+    fi
+}
+
+require_curl() { command -v curl &>/dev/null || die "curl is required for HuggingFace pulls"; }
+require_sha256() {
+    command -v sha256sum &>/dev/null || die "sha256sum required (coreutils)"
+}
+
+# ---------------------------------------------------------------------------
+# Storage guards (NFR-11.3 / R-18)
+# ---------------------------------------------------------------------------
+
+# Returns the percent-used of the filesystem containing $1 (an int 0..100).
+# If the path doesn't exist, walks up to the nearest parent that does.
+fs_percent_used() {
+    local path=$1
+    while [ ! -e "$path" ] && [ "$path" != "/" ]; do
+        path=$(dirname "$path")
+    done
+    df --output=pcent "$path" 2>/dev/null | tail -1 | tr -d ' %'
+}
+
+enforce_storage_guard() {
+    local target=$1
+    local action=${2:-pull}
+    local pct
+    pct=$(fs_percent_used "$target") || pct=0
+    if [ -z "$pct" ] || ! [[ "$pct" =~ ^[0-9]+$ ]]; then
+        warn "Could not determine disk usage for $target; skipping guard"
+        return 0
+    fi
+    if [ "$pct" -ge "$STORAGE_REFUSE_PCT" ]; then
+        die "Storage at ${pct}% of ${target} — refusing $action (threshold ${STORAGE_REFUSE_PCT}%). Free space with: kintsugi-models remove <slug> --delete-weights"
+    fi
+    if [ "$pct" -ge "$STORAGE_WARN_PCT" ]; then
+        warn "Storage at ${pct}% of ${target} (threshold ${STORAGE_WARN_PCT}% warning)"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Manifest operations
+# ---------------------------------------------------------------------------
+
+ensure_user_manifest() {
+    if [ ! -f "$USER_MANIFEST" ]; then
+        mkdir -p "$USER_MANIFEST_DIR"
+        cat > "$USER_MANIFEST" <<'YAML_EOF'
+# User model manifest — edits shadow manifest/models-recommended.yaml on slug collision.
+# See manifest/models-recommended.yaml in the repo for schema reference.
+schema_version: 1
+signed_release: false
+recommended: []
+YAML_EOF
+        info "Created $USER_MANIFEST"
+    fi
+}
+
+collect_slugs_by_source() {
+    # Usage: collect_slugs_by_source <source>
+    # Emits each matching slug on its own line, deduplicated (user manifest first).
+    require_yq
+    local src=$1
+    {
+        [ -f "$USER_MANIFEST" ] && \
+            yq eval ".recommended[]? | select(.source == \"$src\") | .slug" "$USER_MANIFEST" 2>/dev/null
+        [ -n "$RECOMMENDED_MANIFEST" ] && \
+            yq eval ".recommended[]? | select(.source == \"$src\") | .slug" "$RECOMMENDED_MANIFEST" 2>/dev/null
+    } | awk 'NF && !seen[$0]++'
+}
+
+manifest_entry_for_slug() {
+    local slug=$1
+    require_yq
+    # Prefer user manifest, fall back to recommended.
+    if [ -f "$USER_MANIFEST" ]; then
+        local hit
+        hit=$(yq eval ".recommended[] | select(.slug == \"$slug\")" "$USER_MANIFEST" 2>/dev/null)
+        if [ -n "$hit" ] && [ "$hit" != "null" ]; then
+            echo "$hit"
+            return 0
+        fi
+    fi
+    if [ -n "$RECOMMENDED_MANIFEST" ]; then
+        local hit
+        hit=$(yq eval ".recommended[] | select(.slug == \"$slug\")" "$RECOMMENDED_MANIFEST" 2>/dev/null)
+        if [ -n "$hit" ] && [ "$hit" != "null" ]; then
+            echo "$hit"
+            return 0
+        fi
+    fi
+    return 1
+}
+
+# ---------------------------------------------------------------------------
+# Subcommands
+# ---------------------------------------------------------------------------
+
+cmd_help() {
+    sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'
+    cat <<EOF
+
+Examples:
+  kintsugi-models list
+  kintsugi-models list --sizes
+  kintsugi-models add qwen3.5:4b --source ollama
+  kintsugi-models pull qwen3.5:4b
+  kintsugi-models pull Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf --target /mnt/master/payload/models/
+  kintsugi-models remove qwen3.5:4b --delete-weights
+  kintsugi-models verify --all
+
+Environment:
+  KINTSUGI_REPO_ROOT            Override repo root (default: auto-detect)
+  KINTSUGI_USER_MODELS_DIR      User model dir (default: /data/models/user)
+  KINTSUGI_USER_MANIFEST_DIR    User manifest dir (default: /data/models/user)
+  KINTSUGI_STORAGE_WARN_PCT     Soft-warn at N% disk usage (default: 80)
+  KINTSUGI_STORAGE_REFUSE_PCT   Hard-refuse pull at N% (default: 95)
+
+Version: ${VERSION}
+EOF
+}
+
+cmd_list() {
+    local show_sizes=0
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --sizes) show_sizes=1; shift ;;
+            *) die "Unknown flag for list: $1" ;;
+        esac
+    done
+
+    require_yq
+
+    printf "%-48s %-12s %-14s %-10s %s\n" "SLUG" "RUNTIME" "SOURCE" "FROM" "PURPOSE"
+    printf "%s\n" "$(printf '%.0s-' {1..110})"
+
+    # Walk recommended first, flagging overrides from user manifest.
+    if [ -n "$RECOMMENDED_MANIFEST" ]; then
+        while IFS=$'\t' read -r slug runtime source purpose; do
+            [ -z "$slug" ] && continue
+            local from="recommended"
+            if [ -f "$USER_MANIFEST" ] && yq eval ".recommended[] | select(.slug == \"$slug\") | .slug" "$USER_MANIFEST" 2>/dev/null | grep -q .; then
+                from="shadowed"
+            fi
+            printf "%-48s %-12s %-14s %-10s %s\n" "$slug" "$runtime" "$source" "$from" "${purpose:0:40}"
+        done < <(yq eval '.recommended[] | [.slug, .runtime, .source, .purpose] | @tsv' "$RECOMMENDED_MANIFEST" 2>/dev/null)
+    fi
+
+    # Then walk user entries. Mark user-only entries.
+    if [ -f "$USER_MANIFEST" ]; then
+        while IFS=$'\t' read -r slug runtime source purpose; do
+            [ -z "$slug" ] && continue
+            local in_recommended=0
+            [ -n "$RECOMMENDED_MANIFEST" ] && yq eval ".recommended[] | select(.slug == \"$slug\") | .slug" "$RECOMMENDED_MANIFEST" 2>/dev/null | grep -q . && in_recommended=1
+            [ "$in_recommended" -eq 1 ] && continue  # already printed with "shadowed"
+            printf "%-48s %-12s %-14s %-10s %s\n" "$slug" "$runtime" "$source" "user-only" "${purpose:0:40}"
+        done < <(yq eval '.recommended[] | [.slug, .runtime, .source, .purpose] | @tsv' "$USER_MANIFEST" 2>/dev/null)
+    fi
+
+    if [ "$show_sizes" = "1" ]; then
+        echo ""
+        echo "--- Present files ---"
+        # Inventory the default user models dir + a typical bundled payload dir
+        for d in "$DEFAULT_USER_MODELS_DIR" /payload/models /cdrom/payload/models; do
+            [ -d "$d" ] || continue
+            find "$d" -name "*.gguf" -type f -exec ls -lh {} \; 2>/dev/null | \
+                awk -v base="$d" '{print base "/" $NF " (" $5 ")"}'
+        done
+        if command -v ollama &>/dev/null; then
+            echo "--- Ollama-managed ---"
+            ollama list 2>/dev/null | tail -n +2 || true
+        fi
+    fi
+}
+
+cmd_add() {
+    [ $# -lt 1 ] && die "Usage: kintsugi-models add <slug> [--source ollama|huggingface] [--quant Q] [--hf-repo R] [--hf-file F] [--sha256 H]"
+    local slug=$1; shift
+    local source="" quant="" hf_repo="" hf_file="" sha="" runtime=""
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --source)  source=$2; shift 2 ;;
+            --quant)   quant=$2; shift 2 ;;
+            --hf-repo) hf_repo=$2; shift 2 ;;
+            --hf-file) hf_file=$2; shift 2 ;;
+            --sha256)  sha=$2; shift 2 ;;
+            --runtime) runtime=$2; shift 2 ;;
+            *) die "Unknown flag for add: $1" ;;
+        esac
+    done
+
+    # Infer source + runtime from slug shape if not given.
+    if [ -z "$source" ]; then
+        if [[ "$slug" == *":"* ]]; then
+            source="ollama"; runtime="${runtime:-ollama}"
+        elif [[ "$slug" == *.gguf ]]; then
+            source="huggingface"; runtime="${runtime:-llama-cpp}"
+        else
+            die "Could not infer source for '$slug'. Pass --source ollama|huggingface."
+        fi
+    fi
+    [ -z "$runtime" ] && runtime=$( [ "$source" = "ollama" ] && echo "ollama" || echo "llama-cpp" )
+
+    if [ "$source" = "huggingface" ]; then
+        [ -z "$hf_repo" ] && die "--hf-repo required for huggingface source"
+        [ -z "$hf_file" ] && hf_file="$slug"
+    fi
+
+    ensure_user_manifest
+    require_yq
+
+    # Idempotency: warn if slug already present.
+    if yq eval ".recommended[] | select(.slug == \"$slug\") | .slug" "$USER_MANIFEST" 2>/dev/null | grep -q .; then
+        warn "Slug '$slug' already in user manifest. Not modified. Use remove+add to change."
+        return 0
+    fi
+
+    # Build entry YAML.
+    local entry
+    entry=$(cat <<YAML
+slug: "$slug"
+runtime: $runtime
+source: $source
+quant: ${quant:-null}
+sha256: ${sha:-null}
+purpose: "user-added entry"
+tested_on: []
+status: user
+YAML
+    )
+    if [ "$source" = "huggingface" ]; then
+        entry+=$'\n'"hf_repo: \"$hf_repo\""
+        entry+=$'\n'"hf_file: \"$hf_file\""
+    fi
+
+    # Append to user manifest.
+    yq eval ".recommended += [$(echo "$entry" | yq eval -o=json -I=0)]" -i "$USER_MANIFEST"
+    info "Added '$slug' to $USER_MANIFEST"
+}
+
+cmd_pull() {
+    [ $# -lt 1 ] && die "Usage: kintsugi-models pull <slug> [--target DIR] [--yes]"
+    local slug=$1; shift
+    local target="$DEFAULT_USER_MODELS_DIR"
+    local auto_yes=0
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --target) target=$2; shift 2 ;;
+            --yes|-y) auto_yes=1; shift ;;
+            *) die "Unknown flag for pull: $1" ;;
+        esac
+    done
+
+    # Look up entry (add on-the-fly if not present).
+    local entry
+    if ! entry=$(manifest_entry_for_slug "$slug"); then
+        warn "Slug '$slug' not in any manifest; adding to user manifest and continuing."
+        cmd_add "$slug"
+        entry=$(manifest_entry_for_slug "$slug") || die "Could not read slug entry after add"
+    fi
+
+    require_yq
+    local runtime source hf_repo hf_file expected_sha
+    runtime=$(echo "$entry" | yq eval '.runtime // ""' -)
+    source=$(echo "$entry"  | yq eval '.source  // ""' -)
+    hf_repo=$(echo "$entry" | yq eval '.hf_repo // ""' -)
+    hf_file=$(echo "$entry" | yq eval '.hf_file // ""' -)
+    expected_sha=$(echo "$entry" | yq eval '.sha256  // ""' -)
+
+    # Non-recommended slugs need --yes.
+    local in_recommended=0
+    if [ -n "$RECOMMENDED_MANIFEST" ] && \
+       yq eval ".recommended[] | select(.slug == \"$slug\") | .slug" "$RECOMMENDED_MANIFEST" 2>/dev/null | grep -q .; then
+        in_recommended=1
+    fi
+    if [ "$in_recommended" = "0" ] && [ "$auto_yes" != "1" ]; then
+        echo "Slug '$slug' is NOT in the maintainer-recommended list. The maintainer's"
+        echo "signature does not cover user-supplied slugs. Re-run with --yes to proceed."
+        return 2
+    fi
+
+    # Storage guard (for targets that aren't Ollama-managed).
+    mkdir -p "$target" 2>/dev/null || true
+    enforce_storage_guard "$target" "pull"
+
+    info "Pulling '$slug' from $source → ${target}"
+    echo "  Expected sha256: ${expected_sha:-<not specified>}"
+
+    case "$source" in
+        ollama)
+            command -v ollama &>/dev/null || die "ollama binary not found. Install Ollama first (Kintsugi ISO hook 05-install-ollama)."
+            echo "  Running: ollama pull $slug"
+            ollama pull "$slug"
+            ;;
+        huggingface)
+            require_curl
+            require_sha256
+            [ -n "$hf_repo" ] || die "No hf_repo in manifest entry for $slug"
+            [ -n "$hf_file" ] || die "No hf_file in manifest entry for $slug"
+            local url="https://huggingface.co/${hf_repo}/resolve/main/${hf_file}"
+            local out="${target}/${hf_file}"
+            echo "  Source URL: $url"
+            echo "  Destination: $out"
+            if [ -f "$out" ]; then
+                info "Destination already exists; running verify instead of re-downloading."
+            else
+                curl -L --fail --retry 3 -o "$out.partial" "$url" || die "Download failed"
+                mv "$out.partial" "$out"
+            fi
+            if [ -n "$expected_sha" ] && [ "$expected_sha" != "null" ] && [ "$expected_sha" != "" ]; then
+                local actual
+                actual=$(sha256sum "$out" | awk '{print $1}')
+                if [ "$actual" = "$expected_sha" ]; then
+                    info "sha256 verified: $actual"
+                else
+                    warn "sha256 MISMATCH: expected $expected_sha, got $actual"
+                    return 3
+                fi
+            else
+                warn "No sha256 in manifest; skipping integrity check. Run 'kintsugi-models verify $slug' after inspection."
+            fi
+            ;;
+        url|*)
+            die "Source '$source' not yet supported in v1.0 (only ollama and huggingface)"
+            ;;
+    esac
+
+    info "Pull complete for '$slug' (runtime: $runtime)"
+}
+
+cmd_remove() {
+    [ $# -lt 1 ] && die "Usage: kintsugi-models remove <slug> [--delete-weights]"
+    local slug=$1; shift
+    local delete_weights=0
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --delete-weights) delete_weights=1; shift ;;
+            *) die "Unknown flag for remove: $1" ;;
+        esac
+    done
+
+    require_yq
+
+    if [ -f "$USER_MANIFEST" ] && yq eval ".recommended[] | select(.slug == \"$slug\") | .slug" "$USER_MANIFEST" 2>/dev/null | grep -q .; then
+        yq eval "del(.recommended[] | select(.slug == \"$slug\"))" -i "$USER_MANIFEST"
+        info "Removed '$slug' from user manifest"
+    else
+        warn "Slug '$slug' not in user manifest (may still be in recommended list; recommended entries can't be removed — shadow with 'add' to override)"
+    fi
+
+    if [ "$delete_weights" = "1" ]; then
+        local entry
+        if entry=$(manifest_entry_for_slug "$slug" 2>/dev/null); then
+            local source hf_file
+            source=$(echo "$entry" | yq eval '.source // ""' -)
+            hf_file=$(echo "$entry" | yq eval '.hf_file // ""' -)
+            case "$source" in
+                ollama)
+                    command -v ollama &>/dev/null && ollama rm "$slug" && info "Removed Ollama model '$slug'"
+                    ;;
+                huggingface)
+                    for d in "$DEFAULT_USER_MODELS_DIR" /payload/models; do
+                        [ -f "${d}/${hf_file}" ] && rm -f "${d}/${hf_file}" && info "Deleted ${d}/${hf_file}"
+                    done
+                    ;;
+            esac
+        fi
+    fi
+}
+
+cmd_verify() {
+    local target="${1:-}"
+    require_yq
+    require_sha256
+
+    local slugs=()
+    if [ -z "$target" ] || [ "$target" = "--all" ]; then
+        while IFS= read -r s; do
+            [ -n "$s" ] && slugs+=("$s")
+        done < <(collect_slugs_by_source huggingface)
+    else
+        slugs=("$target")
+    fi
+
+    [ ${#slugs[@]} -eq 0 ] && { info "No huggingface-sourced slugs to verify."; return 0; }
+
+    local fail=0
+    for slug in "${slugs[@]}"; do
+        local entry hf_file expected_sha source found=""
+        entry=$(manifest_entry_for_slug "$slug") || { warn "$slug: not in any manifest"; fail=1; continue; }
+        source=$(echo "$entry" | yq eval '.source  // ""' -)
+        hf_file=$(echo "$entry" | yq eval '.hf_file // ""' -)
+        expected_sha=$(echo "$entry" | yq eval '.sha256 // ""' -)
+
+        if [ "$source" != "huggingface" ]; then
+            info "$slug: source=$source (no sha256 verification path — handled by runtime)"
+            continue
+        fi
+        [ -z "$hf_file" ] && { warn "$slug: no hf_file in manifest"; fail=1; continue; }
+
+        for d in "$DEFAULT_USER_MODELS_DIR" /payload/models /cdrom/payload/models; do
+            [ -f "${d}/${hf_file}" ] && found="${d}/${hf_file}" && break
+        done
+        if [ -z "$found" ]; then
+            warn "$slug: weight file '$hf_file' not found on disk (run 'kintsugi-models pull $slug' first)"
+            fail=1
+            continue
+        fi
+
+        if [ -z "$expected_sha" ] || [ "$expected_sha" = "null" ]; then
+            warn "$slug: no expected sha256 in manifest — cannot verify"
+            continue
+        fi
+
+        local actual
+        actual=$(sha256sum "$found" | awk '{print $1}')
+        if [ "$actual" = "$expected_sha" ]; then
+            info "$slug: OK ($found)"
+        else
+            err "$slug: MISMATCH — expected $expected_sha, got $actual"
+            fail=1
+        fi
+    done
+
+    return "$fail"
+}
+
+# ---------------------------------------------------------------------------
+# Main dispatch
+# ---------------------------------------------------------------------------
+
+main() {
+    [ $# -lt 1 ] && { cmd_help; exit 0; }
+    local sub=$1; shift
+    case "$sub" in
+        list)    cmd_list "$@" ;;
+        add)     cmd_add "$@" ;;
+        pull)    cmd_pull "$@" ;;
+        remove)  cmd_remove "$@" ;;
+        verify)  cmd_verify "$@" ;;
+        help|-h|--help) cmd_help ;;
+        version|--version) echo "kintsugi-models ${VERSION}" ;;
+        *) err "Unknown subcommand: $sub"; cmd_help; exit 2 ;;
+    esac
+}
+
+main "$@"

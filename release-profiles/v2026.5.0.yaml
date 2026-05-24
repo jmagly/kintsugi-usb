@@ -1,0 +1,13 @@
+# v2026.5.0 release profile — first tagged build (CalVer).
+schema_version: 1
+generated_by: "manual release-profile v2026.5.0"
+generated_at: "2026-05-23T00:00:00-04:00"
+build_name: "kintsugi-v2026.5.0"
+include_vscode: true
+include_ollama: true
+ollama_version: "latest"
+yq_version: "v4.44.3"
+frameworks: ["aider", "claude-code", "codex-cli"]
+models_post_flash: ["qwen3.5:4b", "qwen3.5:9b"]
+signing:
+  enabled: false  # signing (minisign) deferred to a later release per ADR-006 §D5

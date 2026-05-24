@@ -1,0 +1,72 @@
+#!/bin/bash
+# pre-commit — block commits that introduce secret-pattern matches.
+#
+# Commit-time counterpart to scripts/prep-master.sh's image-time scan (risk R-07,
+# Gitea #32). Scans only the ADDED lines of staged changes against the shared
+# pattern file scripts/secret-patterns.txt, so pre-existing code is never re-flagged.
+# Reports offending files by name only — never echoes matched content (which would
+# leak the secret into terminal scrollback).
+#
+# Install:  scripts/install-hooks.sh   (sets core.hooksPath = scripts/hooks)
+# Bypass:   git commit --no-verify     (discouraged — state the justification in the
+#                                        commit body if you must; see dev-pipeline-safety)
+#
+# SPDX-License-Identifier: MIT
+set -euo pipefail
+
+REPO_ROOT=$(git rev-parse --show-toplevel)
+PATTERN_FILE="${REPO_ROOT}/scripts/secret-patterns.txt"
+
+if [ ! -f "$PATTERN_FILE" ]; then
+    echo "pre-commit: pattern file missing ($PATTERN_FILE) — skipping secret scan" >&2
+    exit 0
+fi
+
+# Files that legitimately contain pattern-like strings (the patterns themselves,
+# their documentation, and this hook). Excluded from the scan.
+is_excluded() {
+    case "$1" in
+        scripts/secret-patterns.txt|scripts/hooks/pre-commit|docs/sanitization-checklist.md)
+            return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+CLEAN_PATTERNS=$(mktemp)
+trap 'rm -f "$CLEAN_PATTERNS"' EXIT
+grep -vE '^\s*(#|$)' "$PATTERN_FILE" > "$CLEAN_PATTERNS"
+
+FAIL=0
+REPORT=""
+
+# Staged added/copied/modified files, NUL-delimited to survive odd names.
+while IFS= read -r -d '' file; do
+    is_excluded "$file" && continue
+    # Skip binary blobs (numstat reports '-' for added/deleted on binaries).
+    [ "$(git diff --cached --numstat -- "$file" | cut -f1)" = "-" ] && continue
+    # Added lines only (strip the single leading '+'); match against patterns.
+    if git diff --cached --no-color -U0 -- "$file" \
+        | grep -E '^\+[^+]' \
+        | sed 's/^+//' \
+        | grep -Eqf "$CLEAN_PATTERNS"; then
+        FAIL=1
+        REPORT="${REPORT}  ${file}"$'\n'
+    fi
+done < <(git diff --cached --name-only --diff-filter=ACM -z)
+
+if [ "$FAIL" -ne 0 ]; then
+    {
+        echo ""
+        echo "✗ pre-commit: secret pattern(s) detected in staged changes:"
+        printf '%s' "$REPORT"
+        echo ""
+        echo "Matched a pattern from scripts/secret-patterns.txt (risk R-07)."
+        echo "Remove the secret from the staged change, or refine the pattern if this"
+        echo "is a genuine false positive. See docs/sanitization-checklist.md."
+        echo ""
+        echo "Last resort, with justification in the commit body: git commit --no-verify"
+    } >&2
+    exit 1
+fi
+
+exit 0

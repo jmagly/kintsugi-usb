@@ -1,0 +1,455 @@
+#!/bin/bash
+# kintsugi-build — single-command wizard for building a personalized
+# Kintsugi USB master ISO. Central iteration-1 deliverable per ADR-006 §D1.
+#
+# Usage:
+#   ./scripts/kintsugi-build                         Interactive TUI (default)
+#   ./scripts/kintsugi-build --from-profile <file>   Replay a saved profile
+#                                                    (interactive confirm before build)
+#   ./scripts/kintsugi-build --non-interactive <file>  Replay with NO confirm
+#   ./scripts/kintsugi-build --dry-run [--from-profile <file>]
+#                                                    Show choices + build command; exit
+#   ./scripts/kintsugi-build --help                  This help
+#
+# Output:
+#   ~/kintsugi-builds/<build_name>/build-profile.yaml     Resumable profile
+#   ~/kintsugi-builds/<build_name>/build.log              Full build output
+#   ~/kintsugi-builds/<build_name>/*.iso                  Final master ISO
+#
+# Widget library: whiptail by default (universal on Ubuntu). Falls back to
+# plain prompts when whiptail is absent. No gum / dialog support in v1.0.
+
+set -euo pipefail
+
+VERSION="0.1.0"
+SCHEMA_VERSION=1
+
+# ---------------------------------------------------------------------------
+# Paths + defaults
+# ---------------------------------------------------------------------------
+
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SELF_DIR}/.." && pwd)"
+
+BUILD_SCRIPT="${REPO_ROOT}/scripts/usb-toolkit/build-custom-iso.sh"
+MODELS_MANIFEST="${REPO_ROOT}/manifest/models-recommended.yaml"
+FRAMEWORKS_MANIFEST="${REPO_ROOT}/manifest/agentic-frameworks-recommended.yaml"
+
+BUILDS_ROOT="${KINTSUGI_BUILDS_ROOT:-$HOME/kintsugi-builds}"
+
+# Profile fields (populated by interactive prompts or --from-profile)
+PROFILE_BUILD_NAME=""
+PROFILE_INCLUDE_VSCODE=""       # true/false
+PROFILE_INCLUDE_OLLAMA=""       # true/false
+PROFILE_FRAMEWORKS=""           # space-separated list
+PROFILE_MODELS_POST_FLASH=""    # space-separated list (informational)
+PROFILE_SIGN_RELEASE=""         # true/false (v1.0 → false)
+PROFILE_OLLAMA_VERSION=""       # string
+PROFILE_YQ_VERSION=""           # string
+
+# Mode flags
+MODE_INTERACTIVE=1
+MODE_CONFIRM=1
+MODE_DRY_RUN=0
+PROFILE_INPUT=""
+
+# ---------------------------------------------------------------------------
+# Output helpers
+# ---------------------------------------------------------------------------
+
+c_bold="\033[1m"; c_red="\033[31m"; c_reset="\033[0m"
+err()  { echo -e "${c_red}ERROR:${c_reset} $*" >&2; }
+warn() { echo -e "${c_red}WARN:${c_reset}  $*" >&2; }
+info() { echo "$*"; }
+head1() { echo -e "\n${c_bold}== $* ==${c_reset}"; }
+die()  { err "$*"; exit 1; }
+
+# ---------------------------------------------------------------------------
+# Prerequisite detection
+# ---------------------------------------------------------------------------
+
+have_whiptail() { command -v whiptail &>/dev/null; }
+have_lb()       { command -v lb &>/dev/null; }
+have_mikefarah_yq() { command -v yq &>/dev/null && yq --version 2>&1 | grep -qi mikefarah; }
+
+check_prerequisites() {
+    local missing=()
+    have_lb || missing+=("live-build (apt: live-build)")
+    have_mikefarah_yq || missing+=("mikefarah/yq (see kintsugi-models --help for install)")
+    [ -x "$BUILD_SCRIPT" ] || missing+=("scripts/usb-toolkit/build-custom-iso.sh (script not executable?)")
+    [ -f "$MODELS_MANIFEST" ] || missing+=("manifest/models-recommended.yaml")
+    [ -f "$FRAMEWORKS_MANIFEST" ] || missing+=("manifest/agentic-frameworks-recommended.yaml")
+
+    if [ ${#missing[@]} -gt 0 ]; then
+        err "Missing prerequisites:"
+        for m in "${missing[@]}"; do echo "  - $m" >&2; done
+        cat >&2 <<HINT
+
+Install live-build + whiptail:
+  sudo apt-get update
+  sudo apt-get install -y live-build whiptail
+
+Install mikefarah/yq:
+  sudo wget -O /usr/local/bin/yq \\
+    https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+  sudo chmod +x /usr/local/bin/yq
+HINT
+        exit 1
+    fi
+
+    # Storage: build needs ~20 GB free in $BUILDS_ROOT's filesystem.
+    mkdir -p "$BUILDS_ROOT"
+    local avail_gb
+    avail_gb=$(df -BG --output=avail "$BUILDS_ROOT" | tail -1 | tr -dc '0-9')
+    if [ -n "$avail_gb" ] && [ "$avail_gb" -lt 20 ]; then
+        warn "Only ${avail_gb} GB free at $BUILDS_ROOT (recommended: 20+ GB)"
+    fi
+
+    if ! have_whiptail; then
+        warn "whiptail not installed — falling back to plain prompts. Install: sudo apt-get install -y whiptail"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Prompt helpers — whiptail with plain fallback
+# ---------------------------------------------------------------------------
+
+# yes/no prompt. Args: title, message, default (y|n).
+ask_yesno() {
+    local title=$1 msg=$2 default=${3:-y}
+    if have_whiptail; then
+        local default_flag=()
+        [ "$default" = "n" ] && default_flag=(--defaultno)
+        if whiptail --title "$title" "${default_flag[@]}" --yesno "$msg" 15 70; then
+            echo "true"
+        else
+            echo "false"
+        fi
+        return 0
+    fi
+    # Plain fallback
+    local prompt="[$default]"
+    read -rp "$title — $msg ($prompt) " reply
+    reply="${reply:-$default}"
+    case "${reply,,}" in
+        y|yes|true) echo "true" ;;
+        *) echo "false" ;;
+    esac
+}
+
+# Input box. Args: title, message, default.
+ask_input() {
+    local title=$1 msg=$2 default=$3
+    if have_whiptail; then
+        whiptail --title "$title" --inputbox "$msg" 12 70 "$default" 3>&1 1>&2 2>&3 || echo "$default"
+        return 0
+    fi
+    read -rp "$title — $msg [$default] " reply
+    echo "${reply:-$default}"
+}
+
+# Multi-choice checkbox. Args: title, message, then tag/description/default triples.
+# Emits space-separated selected tags on stdout.
+ask_checklist() {
+    local title=$1 msg=$2; shift 2
+    if have_whiptail; then
+        local opts=()
+        while [ $# -ge 3 ]; do
+            opts+=("$1" "$2" "$3"); shift 3
+        done
+        whiptail --title "$title" --checklist "$msg" 20 78 10 "${opts[@]}" 3>&1 1>&2 2>&3 | tr -d '"' || true
+        return 0
+    fi
+    # Plain fallback: comma-separated input
+    echo "$title — $msg"
+    local idx=0 defaults=()
+    while [ $# -ge 3 ]; do
+        idx=$((idx + 1))
+        echo "  $idx) $1   $2   (default: $3)"
+        [ "$3" = "ON" ] && defaults+=("$1")
+        shift 3
+    done
+    local default_list="${defaults[*]}"
+    read -rp "Selected (space-separated tags; default = $default_list): " reply
+    echo "${reply:-$default_list}"
+}
+
+# ---------------------------------------------------------------------------
+# YAML profile I/O (mikefarah yq)
+# ---------------------------------------------------------------------------
+
+write_profile() {
+    local path=$1
+    mkdir -p "$(dirname "$path")"
+    # Frameworks as a YAML sequence. Intentional word-splitting of the
+    # space-separated lists into printf repeat-args.
+    local fw_yaml models_yaml
+    # shellcheck disable=SC2086
+    fw_yaml=$(printf '"%s", ' $PROFILE_FRAMEWORKS | sed 's/, $//')
+    # shellcheck disable=SC2086
+    models_yaml=$(printf '"%s", ' $PROFILE_MODELS_POST_FLASH | sed 's/, $//')
+
+    cat > "$path" <<YAML
+# Kintsugi USB build profile — schema v${SCHEMA_VERSION}
+schema_version: ${SCHEMA_VERSION}
+generated_by: "kintsugi-build ${VERSION}"
+generated_at: "$(date -Iseconds)"
+
+build_name: "${PROFILE_BUILD_NAME}"
+include_vscode: ${PROFILE_INCLUDE_VSCODE}
+include_ollama: ${PROFILE_INCLUDE_OLLAMA}
+ollama_version: "${PROFILE_OLLAMA_VERSION:-latest}"
+yq_version: "${PROFILE_YQ_VERSION:-v4.44.3}"
+frameworks: [${fw_yaml}]
+models_post_flash: [${models_yaml}]
+signing:
+  enabled: ${PROFILE_SIGN_RELEASE}
+  # v1.0 ships sha256-only (ADR-003 amended, ADR-006 §D5).
+  # Set enabled: true once v1.1 minisign flow lands.
+YAML
+    info "Profile saved: $path"
+}
+
+read_profile() {
+    local path=$1
+    [ -f "$path" ] || die "Profile file not found: $path"
+    have_mikefarah_yq || die "mikefarah/yq required to parse profile"
+
+    local sv
+    sv=$(yq eval '.schema_version' "$path")
+    if [ "$sv" != "$SCHEMA_VERSION" ]; then
+        die "Profile schema_version=$sv (expected $SCHEMA_VERSION)"
+    fi
+
+    PROFILE_BUILD_NAME=$(yq eval '.build_name'        "$path")
+    PROFILE_INCLUDE_VSCODE=$(yq eval '.include_vscode' "$path")
+    PROFILE_INCLUDE_OLLAMA=$(yq eval '.include_ollama' "$path")
+    PROFILE_OLLAMA_VERSION=$(yq eval '.ollama_version // "latest"' "$path")
+    PROFILE_YQ_VERSION=$(yq eval '.yq_version // "v4.44.3"' "$path")
+    PROFILE_FRAMEWORKS=$(yq eval '.frameworks[]' "$path" 2>/dev/null | tr '\n' ' ' | sed 's/ *$//')
+    PROFILE_MODELS_POST_FLASH=$(yq eval '.models_post_flash[]' "$path" 2>/dev/null | tr '\n' ' ' | sed 's/ *$//')
+    PROFILE_SIGN_RELEASE=$(yq eval '.signing.enabled' "$path")
+}
+
+# ---------------------------------------------------------------------------
+# Interactive flow
+# ---------------------------------------------------------------------------
+
+run_interactive() {
+    head1 "Kintsugi USB Build Wizard v${VERSION}"
+    info "Single-command build for a personalized Kintsugi rescue USB."
+    info "Uses live-build; produces a Live ISO you can \`dd\` to a USB or"
+    info "package for distribution."
+    echo ""
+
+    # 1. Build name
+    local default_name
+    default_name="kintsugi-v2026.5.0-$(date +%Y%m%d)"
+    PROFILE_BUILD_NAME=$(ask_input "Build name" "Short name for this build (used in ISO filename + output dir)" "$default_name")
+
+    # 2. AI runtimes
+    local ai_choices
+    ai_choices=$(ask_checklist "AI runtimes" \
+        "Which local AI runtimes to include? (both recommended)" \
+        "llama_cpp" "llama.cpp — direct GGUF execution" "ON" \
+        "ollama"    "Ollama — model-management CLI + OpenAI-compat API" "ON")
+    PROFILE_INCLUDE_OLLAMA="false"
+    echo "$ai_choices" | grep -qw "ollama" && PROFILE_INCLUDE_OLLAMA="true"
+    # (llama_cpp choice is informational — llama-server is always installed for offline capability)
+
+    # 3. IDE
+    local ide_yn
+    ide_yn=$(ask_yesno "IDE + Copilot" \
+        "Include VS Code + GitHub Copilot extension + gh CLI?\n\nNote: Copilot requires a paid GitHub subscription, signed in post-flash. Telemetry is disabled by default." \
+        "y")
+    PROFILE_INCLUDE_VSCODE="$ide_yn"
+
+    # 4. Agentic frameworks
+    local fw_choices
+    fw_choices=$(ask_checklist "Agentic frameworks" \
+        "Which agentic frameworks to install at build time?\n\nRecommended (v1.0-tested): aider (open), claude-code (EULA), codex-cli (EULA).\nNone = user installs post-flash via: kintsugi-frameworks install <name>" \
+        "aider"        "Aider — Apache-2.0, BYO-API-key"        "ON" \
+        "claude-code"  "Claude Code CLI — Anthropic EULA"         "OFF" \
+        "codex-cli"    "OpenAI Codex CLI — OpenAI EULA"           "OFF")
+    PROFILE_FRAMEWORKS="$fw_choices"
+
+    # 5. Models (informational — never baked into ISO; user pulls post-flash)
+    local want_pull_hint
+    want_pull_hint=$(ask_yesno "Recommended models" \
+        "Model weights are NEVER baked into the ISO (per ADR-005 user-driven-loading). The wizard can print a post-flash pull suggestion.\n\nSuggest pulling recommended starter models (qwen3.5:4b, qwen3.5:9b) after first boot?" \
+        "y")
+    if [ "$want_pull_hint" = "true" ]; then
+        PROFILE_MODELS_POST_FLASH="qwen3.5:4b qwen3.5:9b"
+    else
+        PROFILE_MODELS_POST_FLASH=""
+    fi
+
+    # 6. Signing (v1.0 default: no, per ADR-006 §D5)
+    local sign_yn
+    sign_yn=$(ask_yesno "Signing (v1.0: sha256 only)" \
+        "Full minisign signing is deferred to v1.1 per ADR-006 §D5. sha256 checksums are always produced alongside the ISO.\n\nEnable minisign anyway? (requires minisign installed + your keypair configured)" \
+        "n")
+    PROFILE_SIGN_RELEASE="$sign_yn"
+
+    # Defaults for version pins (not wizard-configurable in v1.0)
+    PROFILE_OLLAMA_VERSION="latest"
+    PROFILE_YQ_VERSION="v4.44.3"
+}
+
+# ---------------------------------------------------------------------------
+# Confirmation + build
+# ---------------------------------------------------------------------------
+
+show_summary() {
+    head1 "Build plan"
+    cat <<EOF
+Build name:        ${PROFILE_BUILD_NAME}
+Output dir:        ${BUILDS_ROOT}/${PROFILE_BUILD_NAME}/
+Include Ollama:    ${PROFILE_INCLUDE_OLLAMA}    (version: ${PROFILE_OLLAMA_VERSION})
+Include VS Code:   ${PROFILE_INCLUDE_VSCODE}    (Copilot extension + gh CLI)
+Frameworks:        ${PROFILE_FRAMEWORKS:-<none — user installs post-flash>}
+Post-flash models: ${PROFILE_MODELS_POST_FLASH:-<none suggested>}
+Signing:           ${PROFILE_SIGN_RELEASE}  (v1.0: sha256 always; minisign arrives in v1.1)
+
+Build command that will run:
+  ${BUILD_SCRIPT} ${BUILDS_ROOT}/${PROFILE_BUILD_NAME}
+
+Env vars that will be set:
+  KINTSUGI_FRAMEWORKS="${PROFILE_FRAMEWORKS}"
+  KINTSUGI_SKIP_IDE=$( [ "$PROFILE_INCLUDE_VSCODE" = "true" ] && echo "0" || echo "1" )
+  KINTSUGI_SKIP_OLLAMA=$( [ "$PROFILE_INCLUDE_OLLAMA" = "true" ] && echo "0" || echo "1" )
+  KINTSUGI_OLLAMA_VERSION="${PROFILE_OLLAMA_VERSION}"
+  KINTSUGI_YQ_VERSION="${PROFILE_YQ_VERSION}"
+EOF
+}
+
+run_build() {
+    local build_dir="${BUILDS_ROOT}/${PROFILE_BUILD_NAME}"
+    mkdir -p "$build_dir"
+    local log="${build_dir}/build.log"
+    local profile_path="${build_dir}/build-profile.yaml"
+
+    write_profile "$profile_path"
+
+    if [ "$MODE_DRY_RUN" = "1" ]; then
+        info ""
+        info "Dry run — not invoking the builder."
+        info "Rerun without --dry-run, or run the build command manually:"
+        info ""
+        info "  KINTSUGI_FRAMEWORKS='${PROFILE_FRAMEWORKS}' \\"
+        info "  KINTSUGI_SKIP_IDE=$( [ "$PROFILE_INCLUDE_VSCODE" = "true" ] && echo "0" || echo "1" ) \\"
+        info "  KINTSUGI_SKIP_OLLAMA=$( [ "$PROFILE_INCLUDE_OLLAMA" = "true" ] && echo "0" || echo "1" ) \\"
+        info "  KINTSUGI_OLLAMA_VERSION='${PROFILE_OLLAMA_VERSION}' \\"
+        info "  KINTSUGI_YQ_VERSION='${PROFILE_YQ_VERSION}' \\"
+        info "  sudo ${BUILD_SCRIPT} '${build_dir}'"
+        return 0
+    fi
+
+    head1 "Running build"
+    info "Logging to: $log"
+    info "This will take 15–30 minutes. You may need to enter sudo password."
+    echo ""
+
+    local skip_ide skip_ollama
+    [ "$PROFILE_INCLUDE_VSCODE" = "true" ] && skip_ide=0   || skip_ide=1
+    [ "$PROFILE_INCLUDE_OLLAMA" = "true" ] && skip_ollama=0 || skip_ollama=1
+    export KINTSUGI_FRAMEWORKS="$PROFILE_FRAMEWORKS"
+    export KINTSUGI_SKIP_IDE="$skip_ide"
+    export KINTSUGI_SKIP_OLLAMA="$skip_ollama"
+    export KINTSUGI_OLLAMA_VERSION="$PROFILE_OLLAMA_VERSION"
+    export KINTSUGI_YQ_VERSION="$PROFILE_YQ_VERSION"
+
+    if sudo -E "$BUILD_SCRIPT" "$build_dir" 2>&1 | tee "$log"; then
+        head1 "Build succeeded"
+        local iso
+        iso=$(find "$build_dir" -maxdepth 1 -name "*.iso" -o -name "*.hybrid.iso" 2>/dev/null | head -1)
+        if [ -n "$iso" ]; then
+            local sha
+            sha=$(sha256sum "$iso" | awk '{print $1}')
+            cat <<EOF
+
+ISO:       $iso
+Size:      $(du -h "$iso" | cut -f1)
+sha256:    $sha
+
+Save the sha256:
+  echo '${sha}  $(basename "$iso")' > '${iso}.sha256'
+
+Flash it to a USB (DESTRUCTIVE — pick the right device!):
+  sudo dd if='${iso}' of=/dev/sdX bs=4M status=progress conv=fsync
+
+Or package for distribution (iteration-1 imaging cluster):
+  # prep-master.sh + create-base-image.sh arrive with Gitea issues #2 and #3.
+
+Post-flash, pull models:
+EOF
+            for m in $PROFILE_MODELS_POST_FLASH; do
+                info "  kintsugi-models pull $m"
+            done
+        else
+            warn "Build reported success but no ISO was found in $build_dir"
+        fi
+    else
+        local rc=$?
+        err "Build FAILED (exit $rc). See $log for details."
+        return "$rc"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Help
+# ---------------------------------------------------------------------------
+
+cmd_help() {
+    sed -n '2,19p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'
+    cat <<EOF
+
+Flags:
+  --from-profile <file>    Replay a saved profile (interactive confirm)
+  --non-interactive <file> Replay with no confirmation
+  --dry-run                Show the plan + would-run command; do not build
+  --help                   This help
+
+Environment:
+  KINTSUGI_BUILDS_ROOT     Where to create build dirs (default: \$HOME/kintsugi-builds)
+
+Version: ${VERSION}
+EOF
+}
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+main() {
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --from-profile)    PROFILE_INPUT=$2; MODE_INTERACTIVE=0; MODE_CONFIRM=1; shift 2 ;;
+            --non-interactive) PROFILE_INPUT=$2; MODE_INTERACTIVE=0; MODE_CONFIRM=0; shift 2 ;;
+            --dry-run)         MODE_DRY_RUN=1; shift ;;
+            --help|-h)         cmd_help; exit 0 ;;
+            *)                 err "Unknown flag: $1"; cmd_help; exit 2 ;;
+        esac
+    done
+
+    check_prerequisites
+
+    if [ "$MODE_INTERACTIVE" = "1" ]; then
+        run_interactive
+    else
+        read_profile "$PROFILE_INPUT"
+        info "Loaded profile: $PROFILE_INPUT"
+    fi
+
+    show_summary
+
+    if [ "$MODE_CONFIRM" = "1" ] && [ "$MODE_DRY_RUN" = "0" ]; then
+        local go
+        go=$(ask_yesno "Confirm" "Proceed with the build above?" "y")
+        [ "$go" = "true" ] || { info "Aborted by user."; exit 0; }
+    fi
+
+    run_build
+}
+
+main "$@"
