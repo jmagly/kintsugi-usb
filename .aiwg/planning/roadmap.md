@@ -58,7 +58,7 @@ None of these block v2026.5.0.
 | Work | Drives | Tracking |
 |------|--------|----------|
 | **Minisign signing** — generate keypair, commit `kintsugi.pub` on an independent channel, `verify-release.sh`, per-OS signed-verification one-liners, re-tag/release signed. | R-02 | #19 (v1.1) |
-| **Doc-reconciliation pass** — refresh the self-flagged-stale `scripts/README.md` external-builder walkthrough (`payload/models` flow, old signatures), and the `create-base-image`/old-flow references in `docs/toolkit-guide.md` + `docs/wizard-guide.md`, to the wizard + Ventoy reality. | doc accuracy | untracked — file an issue |
+| ~~**Doc-reconciliation pass**~~ — **DONE 2026-05-24** (`9874b23`): `scripts/README.md` rewritten to the wizard+Ventoy flow; `toolkit-guide.md` §7.0 Ventoy assembly added; `build-guide.md` positioned as the manual reference; stale `create-base-image`/Cubic/`vX.Y.Z`/`do-not-exist-yet` cruft removed across docs. | doc accuracy | done |
 | **Agentic-framework catalog expansion** — Cursor, Windsurf, Warp, OpenCode, Factory, Continue.dev beyond the v1.0 three. | product | new |
 | **Gitea Actions CI** — automated build + sanitize/secret scans as gates. | R-06/R-07 | new |
 | **SBOM generation** (CycloneDX/SPDX) beyond `manifest.json`. | supply chain | new |
