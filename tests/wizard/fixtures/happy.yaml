@@ -1,0 +1,14 @@
+# Kintsugi USB build profile — schema v1 (test fixture: happy path)
+schema_version: 1
+generated_by: "bats-fixture"
+generated_at: "2026-05-24T00:00:00Z"
+
+build_name: "kintsugi-test-happy"
+include_vscode: true
+include_ollama: true
+ollama_version: "latest"
+yq_version: "v4.44.3"
+frameworks: ["aider"]
+models_post_flash: ["qwen3.5:4b"]
+signing:
+  enabled: false

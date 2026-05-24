@@ -1,0 +1,14 @@
+# Kintsugi USB build profile — schema v1 (test fixture: full)
+schema_version: 1
+generated_by: "bats-fixture"
+generated_at: "2026-05-24T00:00:00Z"
+
+build_name: "kintsugi-test-full"
+include_vscode: true
+include_ollama: true
+ollama_version: "latest"
+yq_version: "v4.44.3"
+frameworks: ["aider", "claude-code", "codex-cli"]
+models_post_flash: ["qwen3.5:4b", "qwen3.5:9b"]
+signing:
+  enabled: false

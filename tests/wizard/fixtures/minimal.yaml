@@ -1,0 +1,14 @@
+# Kintsugi USB build profile — schema v1 (test fixture: minimal)
+schema_version: 1
+generated_by: "bats-fixture"
+generated_at: "2026-05-24T00:00:00Z"
+
+build_name: "kintsugi-test-minimal"
+include_vscode: false
+include_ollama: false
+ollama_version: "latest"
+yq_version: "v4.44.3"
+frameworks: []
+models_post_flash: []
+signing:
+  enabled: false
