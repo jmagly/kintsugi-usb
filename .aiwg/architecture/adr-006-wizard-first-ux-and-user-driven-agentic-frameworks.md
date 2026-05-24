@@ -6,6 +6,7 @@
 **Amends**: ADR-001 (LICENSE resolved to MIT), ADR-002 (publish target → NFS for v1.0), ADR-003 (v1.0 signing commitment deferred to v1.1; sha256-only for v1.0)
 **Extends**: ADR-005 (user-driven-loading pattern now also applies to agentic frameworks)
 **Drives amendments to**: SAD §0, §1.2, §4.2, §4.3, §9.1 (signing), §9.5 (license resolved); iteration-1 plan (wizard becomes central deliverable); risk register (new risks); NFR register (new wizard UX category); user stories
+**Build-tool note (2026-05-24)**: the Cubic references in this ADR (§D3, decision Q2, wizard prereq/IDE steps) are superseded by ADR-007 — the implemented builder is live-build, not Cubic. The other decisions in this ADR are unaffected.
 
 ## Context
 

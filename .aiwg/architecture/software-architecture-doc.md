@@ -30,7 +30,7 @@ ADR-006 (wizard-first UX + user-driven agentic frameworks + VS Code/Copilot base
 
 - **§1.2 Scope**: primary UX is `scripts/kintsugi-build` wizard; distributed signed images recede in priority, the wizard-driven self-build is the primary product.
 - **§4.2 AI Stack**: unchanged from §0.1 amendment; extended conceptually — user also picks agentic frameworks (Aider, Claude Code, Codex CLI, etc.) at build time.
-- **§4.3 Tier B pipeline**: adds (a) `kintsugi-build` wizard as the orchestrator, (b) `kintsugi-frameworks` CLI + `manifest/agentic-frameworks-recommended.yaml` paralleling the model toolkit, (c) VS Code + GitHub Copilot + `gh` CLI installed in the Cubic chroot step of `build-custom-iso.sh` as default base IDE infrastructure.
+- **§4.3 Tier B pipeline**: adds (a) `kintsugi-build` wizard as the orchestrator, (b) `kintsugi-frameworks` CLI + `manifest/agentic-frameworks-recommended.yaml` paralleling the model toolkit, (c) VS Code + GitHub Copilot + `gh` CLI installed in the live-build chroot hook of `build-custom-iso.sh` as default base IDE infrastructure (build tool is live-build per ADR-007).
 - **§4.3 publish target**: changed from Gitea releases to **warehouse NFS mount** for v1.0 (`scripts/publish-release.sh` targets NFS).
 - **§9.1 Security cross-cutting — signing commitment ROLLED BACK**: v1.0 ships sha256-only verification. Full signing flow (minisign keypair, `verify-release.sh`, per-OS one-liners) moves to v1.1. Trade-off documented in ADR-006 §D5.
 - **§9.5 Licensing**: **RESOLVED → MIT** (ADR-001 accepted). LICENSE file committed.
@@ -40,6 +40,10 @@ ADR-006 (wizard-first UX + user-driven agentic frameworks + VS Code/Copilot base
 ### 0.3 Reading order
 
 For any detail: ADR-006 supersedes ADR-005 supersedes the section content below where they conflict. Inline amendment notes are marked in affected sections; the formal SAD §10 erratum pass (Gitea issue #23) is an iteration-1 deliverable that will reconcile this document's body with these amendments.
+
+### 0.4 ADR-007 amendment (2026-05-24 — build tooling)
+
+ADR-007 records that the custom Ubuntu ISO is built with **live-build**, not Cubic. The Cubic references throughout this document (§1.3 glossary, §4.3, §5.2, §7, §10 ADR-003, §11 R-03, §12 Q2, §14 glossary) predate the implementation and are **superseded re: build tool by ADR-007**. live-build is declarative and scriptable — a net provenance improvement — and R-03 is re-assessed accordingly. No other architectural decision changes.
 
 ---
 
@@ -76,7 +80,7 @@ Tier A is summarized here by reference to the existing [docs/architecture.md](..
 **Out of scope (v1.0, deferred to later releases)**:
 
 - LUKS-encrypted persistence (stretch goal; see NFR-4.3). Even deferred, LUKS passphrase rotation is the recipient's responsibility.
-- Reproducible builds for the custom Ubuntu ISO (Cubic is non-reproducible by design; accepted with documentation — see R-03)
+- Bit-for-bit reproducible builds for the custom Ubuntu ISO (live-build is not bit-reproducible by default; achievable with reproducibility flags but deferred — see ADR-007 / R-03)
 - SBOM generation (the third-party license manifest substitutes for v1.0)
 - ARM64 and non-x86_64 architectures
 - Automated CI (Gitea Actions). Pre-publish scanning runs locally via the build host until Gitea Actions is adopted post-v1.0.
@@ -93,7 +97,7 @@ Tier A is summarized here by reference to the existing [docs/architecture.md](..
 | **Persistence overlay** | Ventoy-managed `.dat` file (ext4) layered via overlayfs on top of the read-only squashfs |
 | **exFAT** | Cross-platform filesystem used for the VENTOY partition; no UNIX permissions |
 | **squashfs** | Compressed, read-only filesystem containing the base OS image |
-| **Cubic** | GUI chroot-based Ubuntu ISO customization tool used to build the custom ML-Support ISO |
+| **live-build** | Declarative, scriptable Debian/Ubuntu ISO builder (`lb config` + chroot hooks + `lb build`) used to build the custom ML-Support ISO (ADR-007; replaced the earlier Cubic plan) |
 | **AIWG** | AI Writing Guide; the SDLC framework under which this SAD is produced |
 | **minisign** | Small signing tool (Ed25519) considered for detached release signatures |
 
@@ -101,7 +105,7 @@ Tier A is summarized here by reference to the existing [docs/architecture.md](..
 
 - [docs/architecture.md](../../docs/architecture.md) — runtime artifact architecture (PRIMARY source for Tier A)
 - [docs/requirements.md](../../docs/requirements.md) — original FR/NFR list
-- [docs/build-guide.md](../../docs/build-guide.md) — master USB build procedure (Cubic walkthrough)
+- [docs/build-guide.md](../../docs/build-guide.md) — master USB build procedure (live-build walkthrough)
 - [docs/physical-test-guide.md](../../docs/physical-test-guide.md) — manual boot test procedure (authoritative for TC-3 rescue-tool list and per-host compatibility matrix, referenced by NFR-3.1 / NFR-8.1)
 - [docs/test-strategy.md](../../docs/test-strategy.md) — test strategy
 - Host-specific recovery SOPs (e.g. N5 Pro) are out of repo scope — they live in the fleet repos (sysops); the USB carries them as operator payload
@@ -151,7 +155,7 @@ The architecture is shaped by three forces: non-negotiables from the intake, mea
 - R-01 (license TBD) and R-02 (no provenance) force a published-manifest + checksum + signature architecture and drive ADR-001 and ADR-003.
 - R-04 (no field-update) and R-05 (imaging is manual) define the entire Tier B scope.
 - R-06 and R-07 (accidental secrets in image or repo) shape `prep-master.sh` (NYE) as a sanitize-and-fail-closed tool — including enumeration of CLI auth-state paths (§4.3) — and the `.gitignore` posture.
-- R-03 (Cubic non-reproducibility) is ACCEPTED with documentation; reproducibility is not a v1.0 goal.
+- R-03 (ISO non-reproducibility — live-build, ADR-007) is ACCEPTED with documentation; bit-for-bit reproducibility is not a v1.0 goal.
 - R-15 (AI-drafted runbooks) requires human-reviewed sign-off on every shipped runbook and a "verification always" tail on every procedure.
 
 ---
@@ -242,7 +246,7 @@ Tier B is the repository side of the system. It is largely **not yet existing (N
 
 | Component | Status | Responsibility |
 |-----------|--------|----------------|
-| `docs/build-guide.md` | Exists (sysops-era, needs refinement per R-14) | Human-followed procedure to produce a master USB using Cubic + Ventoy installer |
+| `docs/build-guide.md` | Exists (sysops-era, needs refinement per R-14) | Human-followed procedure to produce a master USB using live-build + Ventoy installer |
 | `scripts/prep-master.sh` | **NYE** | Sanitize a master USB before imaging. Steps: (1) wipe shell history; (2) confirm persistence overlay carries no secrets; (3) zero free space on VENTOY partition (for better zstd ratio); (4) flush filesystem caches; (5) **enumerate and scan all known CLI auth-state paths** — `~/.config/ai-keys.env`, `~/.claude/`, `~/.config/anthropic/`, `~/.config/openai/`, `~/.config/codex/`, `~/.aws/credentials`, `~/.ssh/id_*` — and abort on any non-empty find; (6) grep for known secret patterns (`sk-ant-`, `sk-`, `BEGIN OPENSSH PRIVATE KEY`, `AKIA[0-9A-Z]{16}`, `ghp_[A-Za-z0-9]{36}`, internal hostname ranges — authoritative list pinned in `scripts/secret-patterns.txt` and cross-referenced from R-06) and abort on any hit. Idempotency: the script is pure-sanitize; a second run on an already-sanitized master is a no-op. (Mitigates R-06.) |
 | `scripts/create-image.sh` | **NYE** | Read the prepped master USB via `dd` → pipe through `zstd` → compute `sha256sum` → produce detached signature; emit `kintsugi-<version>.img.zst` + `kintsugi-<version>.img.zst.sha256` + `kintsugi-<version>.img.zst.sig` + a `manifest/<version>.json` listing every bundled ISO/binary/model with its upstream checksum. The manifest is itself hash-chained into the signed release artifact so a tampered manifest cannot lie about bundled components. |
 | Publish workflow | **NYE** (manual today; will use `mcp__git-gitea__create_release`) | Attach `.img.zst`, `.sha256`, `.sig`, manifest, and the public signing key to a Gitea release. The signing key fingerprint is also pinned in `SECURITY.md`. |
@@ -285,7 +289,7 @@ NFR-1.1 (<60s to shell) and NFR-1.2 (<90s to llama-server ready) constrain this 
 ### 5.2 Build-time Process (Tier B)
 
 ```
-  master USB (Cubic-built, hand-curated)
+  master USB (live-build-built, hand-curated)
         │
         ├─► [prep-master.sh]
         │      ├── sanitize persistence overlay (NYE)
@@ -382,7 +386,7 @@ kintsugi-usb/
 
 **Tooling**:
 
-- Cubic — interactive Ubuntu ISO customizer for the master (R-03 accepted).
+- live-build — declarative Ubuntu ISO builder for the master (ADR-007; R-03 accepted).
 - Ventoy installer — writes Ventoy to a USB.
 - `dd`, `zstd`, `sha256sum`, `rsync` — pipeline primitives.
 - `minisign` — detached release signatures (v1.0 commitment, see §9.1).
@@ -524,6 +528,8 @@ Amended 2026-04-21 (#23) to reflect the final state after the two same-day ADR a
 
 - **ADR-006 — Wizard-First UX + User-Driven Agentic Frameworks + NFS Publish + Signing Deferred**. **ACCEPTED 2026-04-20.** Introduces `scripts/kintsugi-build` as the single-command entry point; extends the user-driven-loading pattern from models to agentic frameworks via `kintsugi-frameworks` CLI + `manifest/agentic-frameworks-recommended.yaml`; adds VS Code + GitHub Copilot + gh CLI as default base IDE infrastructure (with telemetry off); changes v1.0 publish target to warehouse NFS; defers minisign signing to v1.1.
 
+- **ADR-007 — Build Tooling: live-build**. **ACCEPTED 2026-05-24.** Records that the custom ISO is built with Debian/Ubuntu `live-build` (declarative, scriptable), not Cubic (interactive GUI) as earlier artifacts assumed. Supersedes the Cubic references in ADR-003 and ADR-006 (build-tool aspect only); re-assesses R-03 — the build is now declarative and bit-reproducibility is achievable with live-build flags, though not enabled by default. No other ADR-006 decision changes. Driven by audit #39.
+
 ---
 
 ## 11. Architecturally Significant Risks
@@ -542,7 +548,7 @@ The architecture actively mitigates the following risks (numbered per [risk-list
 
 Risks **ACCEPTED** at the architectural level:
 
-- **R-03 Cubic non-reproducibility** — Documented as a known limitation; migration path to a declarative builder (live-build, mkosi) is deferred until audience growth or external demand justifies it.
+- **R-03 ISO non-reproducibility** — Documented as a known limitation; the builder is now declarative live-build (ADR-007), so bit-for-bit reproducibility is achievable via `SOURCE_DATE_EPOCH` + pinned apt snapshots — deferred until audience growth or external demand justifies it.
 - **R-13 Persistence corruption on unclean shutdown** — ext4 journaling provides structural protection; secrets are treated as reconstructable rather than irreplaceable.
 - **R-16 Bus factor of 1** — Accepted for a personal/small-fleet project; docs-as-product partially mitigates.
 
@@ -561,7 +567,7 @@ Questions remaining open at v1.0 baseline of this SAD:
 
 1. **Audience scope** (**STILL OPEN**). Is v1.0 strictly personal fleet + family, or a genuine public release with broader expectations? The answer tightens or relaxes several v1.0 controls: the plain-language depth of `docs/flash-image.md` (NFR-5.4), the formality of the `SECURITY.md` disclosure SLA, and whether signing-key ceremony needs witnesses. **The v1.0 signing commitment in §9.1 resolves the most consequential branch of this question defensively** — we ship signed regardless of where on the audience spectrum v1.0 lands. Remaining effect of this question is on documentation register and disclosure-process formality, not on cryptographic posture. Owner: project lead.
 
-2. **Reproducible-build investment** (RESOLVED for v1.0, open for v1.x). Is a migration from Cubic to a declarative builder (live-build, mkosi, debos) in scope for this lifecycle, or do we ship R-03 accepted and document the gap? Default for v1.0: accept. Revisit in v1.x if external reproducibility demand materializes.
+2. **Reproducible-build investment** (RESOLVED for v1.0, open for v1.x). The builder is already declarative live-build (ADR-007); the open question is whether to enable bit-for-bit reproducibility flags (`SOURCE_DATE_EPOCH`, pinned apt snapshots) this lifecycle, or ship R-03 accepted and document the gap. Default for v1.0: accept. Revisit in v1.x if external reproducibility demand materializes.
 
 3. **Cloud CLI redistribution mode** (owned by ADR-001). Do `claude` and `codex` ship baked into the image (subject to EULA review) or as a post-flash installer invoked on first online boot? Owned by ADR-001 and NFR-10.4. This question also covers the cloud-CLI telemetry review (§9.5 item 3).
 
@@ -602,7 +608,7 @@ Questions remaining open at v1.0 baseline of this SAD:
 ## 14. Glossary
 
 - **ADR** — Architecture Decision Record; a short document capturing a single architectural decision and its rationale.
-- **Cubic** — Custom Ubuntu ISO Creator; a GUI chroot-based tool for customizing Ubuntu ISOs.
+- **live-build** — Debian/Ubuntu's declarative ISO build tool (`lb config` / `lb build`); the builder for the custom Kintsugi ISO per ADR-007 (superseded the earlier Cubic plan).
 - **exFAT** — Extensible File Allocation Table; a cross-platform filesystem with no UNIX permission model.
 - **GGUF** — A binary container format for quantized LLM weights used by llama.cpp.
 - **llama.cpp** — An MIT-licensed C++ inference engine for GGUF models. Ships `llama-server` (HTTP API) and `llama-cli`.

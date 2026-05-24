@@ -107,7 +107,7 @@ A wrapper `scripts/verify-release.sh` will automate steps 2–3 for Linux/macOS 
 
 - **Cosign / sigstore migration.** Re-evaluate once Gitea Actions is wired for releases. The minisign pubkey and the cosign identity can coexist during a transition window.
 - **SBOM generation (CycloneDX).** Out of scope for v1.0 per SAD §12; `manifest.json` serves as SBOM-lite.
-- **Reproducible build attestation.** Cubic (the base-OS customization tool) is not bit-reproducible; R-03 acknowledges this. Deferred until a reproducible builder replaces Cubic or until the Ubuntu live-build toolchain is adopted.
+- **Reproducible build attestation.** The base-OS builder is `live-build` (ADR-007 — supersedes the earlier Cubic assumption); it is not bit-reproducible without reproducibility flags, which R-03 acknowledges and defers.
 - **Third-party pubkey mirror.** See Open Questions.
 
 ## Consequences

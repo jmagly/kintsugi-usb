@@ -45,13 +45,13 @@ LICENSE is no longer a decision — it is MIT and committed. This cluster covers
 
 ### Cluster 2 — Ported Script Adaptation
 
-Ported sysops scripts are largely intact. The notable expansion is Copilot/IDE infrastructure in the Cubic chroot step.
+Ported sysops scripts are largely intact. The notable expansion is Copilot/IDE infrastructure in the live-build chroot-hook step (see ADR-007 — the builder is live-build, not Cubic).
 
 Agent role: **Systems engineer**.
 
 #### US-PORT-001 — Adapt build-custom-iso.sh (VS Code + Copilot + gh)
 **Priority**: P0 | **Size**: M | **ADR**: ADR-006 §D3, ADR-005 §D2
-**Acceptance**: Adapt paths, version strings, branding. In the Cubic chroot step, add: Microsoft apt repo signing-key + source; `code` package install; `gh` CLI install; GitHub Copilot extension preinstalled via `code --install-extension github.copilot`; optional VS Code telemetry-disable default (wizard-driven; sets `telemetry.telemetryLevel: off`); Ollama install per US-MODEL-003. Shellcheck clean; SPDX header; invokable non-interactively so the wizard can drive it with answer vars.
+**Acceptance**: Adapt paths, version strings, branding. In the live-build chroot hook (`config/hooks/normal/`), add: Microsoft apt repo signing-key + source; `code` package install; `gh` CLI install; GitHub Copilot extension preinstalled via `code --install-extension github.copilot`; optional VS Code telemetry-disable default (wizard-driven; sets `telemetry.telemetryLevel: off`); Ollama install per US-MODEL-003. Shellcheck clean; SPDX header; invokable non-interactively so the wizard can drive it with answer vars.
 **Dependencies**: LICENSE (DONE); US-MODEL-003 decision.
 
 #### US-PORT-002 — Adapt first-boot-setup.sh
@@ -258,7 +258,7 @@ Agent role: **Docs engineer**.
 - **`verify-release.sh` with minisign** — deferred. v1.0 ships a sha256-wrapper only if needed (covered by per-OS one-liners in `docs/flash-image.md`).
 - **Per-OS minisign verification one-liners** in `docs/flash-image.md` — deferred; placeholder note pointing at v1.1 commitment.
 - **Full agentic-framework catalog** — v1.0 ships three (Aider, Claude Code, Codex CLI); Cursor, Windsurf, Warp, OpenCode, Factory, Continue.dev, and anything else added in iteration-2+.
-- **Reproducible-build migration** — still off-Cubic; accepted limitation per R-03.
+- **Reproducible-build flags** — live-build is the builder (ADR-007); opting into bit-for-bit reproducibility (`SOURCE_DATE_EPOCH` + pinned apt snapshots) is deferred per R-03.
 - **LUKS persistence** (NFR-4.3 stretch) — out of scope.
 - **SBOM generation** (CycloneDX/SPDX) — deferred; `manifest.json` serves as SBOM-lite for v1.0.
 - **Multi-arch support** (arm64) — deferred.

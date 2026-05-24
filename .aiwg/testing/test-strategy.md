@@ -43,7 +43,7 @@ The strategy describes how we establish confidence that a released image boots, 
 - Load or stress testing beyond single-operator use (no multi-user concurrency; single-operator appliance).
 - Fuzz testing of bundled third-party binaries (we trust upstream signatures; our surface is scripts).
 - Multi-architecture support (x86_64 only; ARM64 deferred).
-- Reproducible-build verification (Cubic is interactive; NFR out of scope for v1.0).
+- Bit-for-bit reproducible-build verification (builder is live-build per ADR-007; reproducibility flags out of scope for v1.0 — R-03).
 - Formal mutation testing or coverage gates (no CI yet; see §5).
 - Quality evaluation of LLM outputs (model correctness is not a gate — see R-15 in §10).
 
@@ -287,7 +287,7 @@ Cross-referenced with SAD §11 risks.
 - **R-08 (flash hardware variance)** — We cannot test every USB make/model on the market. Mitigation: a maintained compatibility table in `docs/flash-image.md` (NFR-8.3) fed by recipient feedback; a caveats list for USBs known to mis-enumerate.
 - **R-12 (non-fleet hardware coverage)** — Boot behavior on hardware beyond the four fleet hosts is unknown. Mitigation: `SECURITY.md` and the issue tracker provide incident-reporting channels; `docs/compatibility.md` is a living document.
 - **R-15 (AI hallucinated runbooks)** — No automated quality test for LLM outputs is in scope for v1.0. Mitigation: any runbook content committed to the repo is a human-authored artifact; AI-generated text used in rescue sessions is reviewed by the operator before execution (see UC-002 and UC-003 extension flows).
-- **Cubic non-reproducibility** — The custom Ubuntu ISO cannot be byte-identically rebuilt. Mitigation: every release's `manifest/<version>.json` records the ISO's SHA-256 and the Cubic recipe git SHA; we test the produced artifact rather than the build process.
+- **ISO non-reproducibility (live-build, ADR-007)** — The custom Ubuntu ISO cannot be byte-identically rebuilt without reproducibility flags. Mitigation: every release's `manifest/<version>.json` records the ISO's SHA-256 and the `build-custom-iso.sh` (live-build recipe) git SHA; we test the produced artifact rather than the build process.
 
 ---
 

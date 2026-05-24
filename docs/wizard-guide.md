@@ -266,7 +266,7 @@ Once [`create-image.sh`](../scripts/create-image.sh) and [`generate-manifest.sh`
 | ISO built but filename says `.hybrid.iso` instead of `.iso` | live-build output name variation | Non-fatal. The wizard's `find` picks up both. Rename if you prefer a consistent extension. |
 | Profile replay fails with `schema_version=X (expected 1)` | Profile produced by a future wizard | Rebuild the profile with the matching wizard version, or update the wizard. See §10 on schema bumps. |
 
-For failures inside the chroot (Cubic-like issues — packages failing to configure, dpkg errors), inspect `build.log` around the failing stage and cross-reference with `scripts/usb-toolkit/build-custom-iso.sh`'s step comments. See [`docs/toolkit-guide.md`](toolkit-guide.md) for per-step debugging.
+For failures inside the chroot (live-build chroot-hook issues — packages failing to configure, dpkg errors), inspect `build.log` around the failing stage and cross-reference with `scripts/usb-toolkit/build-custom-iso.sh`'s step comments. See [`docs/toolkit-guide.md`](toolkit-guide.md) for per-step debugging.
 
 ---
 

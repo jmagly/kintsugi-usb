@@ -43,7 +43,7 @@ push/PR → [lint] → [unit tests] → [markdown lint] → [secret scan] → DO
 ## Deferred to Iteration 2+
 
 - CI-driven release publishing (build-image → sign → upload to Gitea)
-- Reproducible-build attestation (requires Cubic alternative per R-03)
+- Reproducible-build attestation (live-build reproducibility flags per ADR-007 / R-03)
 - Hardware-in-the-loop tests on fleet hosts
 - Payload-tarball regeneration CI job
 - SBOM generation (CycloneDX)

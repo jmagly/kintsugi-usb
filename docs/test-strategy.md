@@ -260,7 +260,7 @@ fi
 | Phase | Tests | Method |
 |-------|-------|--------|
 | Iteration 1 (Ventoy setup) | TC-1, TC-2 | QEMU |
-| Iteration 2 (Cubic ISO build) | TC-3, TC-1 | QEMU |
+| Iteration 2 (live-build ISO build) | TC-3, TC-1 | QEMU |
 | Iteration 3 (AI stack integration) | TC-4, TC-5, TC-11, TC-12 | QEMU |
 | Iteration 4 (Persistence + Fleet) | TC-6, TC-8 | QEMU |
 | Iteration 5 (Physical validation) | TC-1, TC-3, TC-5, TC-6, TC-10 | ref-host-1 + ref-host-2 |

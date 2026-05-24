@@ -387,7 +387,7 @@ ventoy.json ──► Ventoy Bootloader
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
 | Boot manager | Ventoy v1.1.10 (GPT + Secure Boot) | No-extraction ISO boot, persistence plugin, active development |
-| ISO builder | Cubic (Ubuntu) | GUI chroot customization, QEMU testing, low learning curve |
+| ISO builder | live-build (Ubuntu) | declarative chroot customization (scriptable, CI-able), QEMU testing, low learning curve |
 | Base distro | Ubuntu 24.04 Server | Small footprint, fleet-aligned, Claude Code supported |
 | Offline AI | llama.cpp (llama-server + llama-cli) | Zero dependencies, OpenAI-compatible API, ~25MB binary |
 | Online AI | Claude Code + Aider | Most capable agentic tool + offline/online bridge |

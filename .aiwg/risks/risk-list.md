@@ -112,14 +112,14 @@ ADR-005 (user-driven model loading + toolkit product surface + Ollama coexistenc
 
 ---
 
-### R-03: Cubic-built custom Ubuntu ISO is not bit-for-bit reproducible
+### R-03: Custom Ubuntu ISO (live-build) is not bit-for-bit reproducible by default
 **Category**: Technical
-**Description**: The custom `ubuntu-24.04-ml-support.iso` is built interactively via Cubic (chroot + GUI). Package install order, timestamps, and apt cache state make the resulting ISO not reproducible byte-for-byte. A recipient cannot rebuild and compare; they must trust the maintainer's artifact plus a signature (see R-02).
+**Description**: The custom `ubuntu-24.04-ml-support.iso` is built declaratively via `live-build` (`scripts/usb-toolkit/build-custom-iso.sh`; see ADR-007 — supersedes the earlier Cubic assumption). Build timestamps, apt cache state, and package-install order still make the resulting ISO not byte-for-byte reproducible by default. A recipient cannot rebuild and bit-compare without reproducibility flags; they trust the maintainer's artifact plus a signature (see R-02). Unlike the prior interactive-GUI approach, the recipe is now fully scriptable and auditable, and bit-reproducibility is *achievable* (not just deferred) via live-build options.
 **Likelihood**: H
 **Impact**: L
 **Severity**: MED
 **Status**: ACCEPTED (with documentation)
-**Mitigation strategy**: Document the non-reproducibility gap explicitly in `docs/build-guide.md` and in ADR-002. Mitigate transitively via strong signing and a per-release manifest of installed package versions (`apt list --installed`) captured from inside the Cubic chroot. Revisit only if audience grows materially or if a recipient's policy demands reproducible builds — migration path would be `live-build` or `mkosi` replacing Cubic.
+**Mitigation strategy**: Document the non-reproducibility gap in `docs/build-guide.md` and ADR-002/ADR-007. Mitigate transitively via strong signing (R-02) and a per-release manifest recording the ISO sha256 plus the `build-custom-iso.sh` git SHA (the declarative recipe). The migration off the interactive-GUI tool to `live-build` is **done** (ADR-007); the remaining step — opting into bit-for-bit reproducibility via `SOURCE_DATE_EPOCH` + pinned apt snapshots — is deferred to backlog, revisited only if audience grows or a recipient's policy demands reproducible builds.
 **Owner**: Joseph
 **Trigger / review date**: Revisit if audience expands beyond fleet + family, or on any third-party reproducibility complaint.
 
