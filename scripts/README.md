@@ -74,7 +74,7 @@ These do **not** exist yet. They are the iteration-1 deliverables layered on top
 |----------------|---------|--------|
 | `usb-toolkit/kintsugi-models` | Model-management CLI (list/add/pull/remove/verify) | ADR-005 §D3 |
 | `prep-master.sh` | Sanitize secrets, zero free space, flush caches on master USB | sad-review-security.md |
-| `create-base-image.sh` | `dd | zstd | sha256 | minisign` of base image | ADR-002 (amended) |
+| `create-image.sh` | `dd | zstd | sha256` of base/Ventoy image (minisign deferred to v1.1, #19) | ADR-002 (amended) |
 | `create-payload-tarball.sh` | Payload tarball (only if spike decides it's still needed) | ADR-002 (amended), conditional |
 | `verify-release.sh` | Recipient-side wrapper for sha256 + minisign verification | ADR-003 |
 | `publish-release.sh` | Gitea API upload of release artifacts | ADR-002 |

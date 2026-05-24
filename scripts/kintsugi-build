@@ -378,8 +378,12 @@ Save the sha256:
 Flash it to a USB (DESTRUCTIVE — pick the right device!):
   sudo dd if='${iso}' of=/dev/sdX bs=4M status=progress conv=fsync
 
-Or package for distribution (iteration-1 imaging cluster):
-  # prep-master.sh + create-base-image.sh arrive with Gitea issues #2 and #3.
+Assemble a full Ventoy multi-boot image, then package it for distribution:
+  # 1. Build the Ventoy .img (bootloader + 32 GiB persistence + this ISO + rescue ISOs):
+  sudo scripts/usb-toolkit/make-ventoy-image.sh --kintsugi-iso '${iso}' [--rescue-iso <iso> ...]
+  # 2. Compress to a distributable .img.zst + .sha256:
+  scripts/create-image.sh dist/kintsugi-ventoy.img
+  # (in-wizard rescue-ISO selection + single-command chaining: Gitea #35 / #36)
 
 Post-flash, pull models:
 EOF
