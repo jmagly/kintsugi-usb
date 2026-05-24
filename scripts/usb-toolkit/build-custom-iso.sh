@@ -38,7 +38,7 @@ lb config \
     --apt-recommends false \
     --security true \
     --cache true \
-    --compression gzip
+    --compression xz
 
 # --- Package lists ---
 
@@ -370,6 +370,9 @@ if [ "${KINTSUGI_SKIP_OLLAMA:-0}" != "1" ]; then
 # /data/ollama on first boot (via first-boot-setup.sh); auto-update disabled.
 set -e
 OLLAMA_VERSION="${OLLAMA_VERSION_EXPORT}"
+# Pinned sha256 of ollama's install.sh (supply-chain hardening, issue #40).
+# Override with KINTSUGI_OLLAMA_INSTALLER_SHA256 after reviewing a new script.
+OLLAMA_INSTALLER_SHA256="${KINTSUGI_OLLAMA_INSTALLER_SHA256:-25f64b810b947145095956533e1bdf56eacea2673c55a7e586be4515fc882c9f}"
 HOOK_HEADER
     cat >> config/hooks/normal/05-install-ollama.hook.chroot <<'HOOK'
 
@@ -377,10 +380,21 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y --no-install-recommends curl ca-certificates
 
-# Fetch the official install script and pin the version. Ollama's script
-# honors OLLAMA_VERSION env var for pinning.
+# Fetch the official install script, VERIFY its sha256 against the pinned
+# value (issue #40 — no unverified curl|bash), then run it. Ollama's script
+# honors OLLAMA_VERSION env var for version pinning.
 INSTALL_SH=$(mktemp --suffix=.sh)
 curl -fsSL https://ollama.com/install.sh -o "$INSTALL_SH"
+GOT_SHA=$(sha256sum "$INSTALL_SH" | awk '{print $1}')
+if [ "$GOT_SHA" != "$OLLAMA_INSTALLER_SHA256" ]; then
+    echo "ERROR: ollama install.sh sha256 mismatch — refusing to execute."
+    echo "  expected: $OLLAMA_INSTALLER_SHA256"
+    echo "  got:      $GOT_SHA"
+    echo "  The upstream installer changed. Review the new script, then update the"
+    echo "  pin (KINTSUGI_OLLAMA_INSTALLER_SHA256 or the default in build-custom-iso.sh)."
+    rm -f "$INSTALL_SH"
+    exit 1
+fi
 OLLAMA_VERSION="${OLLAMA_VERSION}" bash "$INSTALL_SH" || {
     echo "WARN: Ollama install script failed; continuing without Ollama bundled"
     rm -f "$INSTALL_SH"
@@ -489,9 +503,18 @@ for d in /home/live/.vscode/extensions/github.copilot-*; do
     [ -e "$d" ] && copilot_installed=true && break
 done
 if [ "$copilot_installed" = "false" ]; then
+    # Copilot extension version (issue #40). Pinning a reviewed version is
+    # preferred for reproducibility; "latest" is accepted as a documented risk
+    # (the VSIX is fetched unverified from the marketplace). Set COPILOT_VERSION
+    # to pin a specific x.y.z.
+    COPILOT_VERSION="${COPILOT_VERSION:-latest}"
+    if [ "$COPILOT_VERSION" = "latest" ]; then
+        echo "WARN: fetching GitHub Copilot extension at 'latest' (unpinned, unverified)."
+        echo "      Set COPILOT_VERSION=<x.y.z> to pin a reviewed version."
+    fi
     TMP_VSIX=$(mktemp --suffix=.vsix)
     curl -fsSL -o "$TMP_VSIX" \
-        "https://marketplace.visualstudio.com/_apis/public/gallery/publishers/GitHub/vsextensions/copilot/latest/vspackage" || \
+        "https://marketplace.visualstudio.com/_apis/public/gallery/publishers/GitHub/vsextensions/copilot/${COPILOT_VERSION}/vspackage" || \
         echo "WARN: failed to fetch Copilot extension VSIX; users can install post-boot"
     if [ -s "$TMP_VSIX" ]; then
         mkdir -p /usr/share/kintsugi/vscode-extensions
