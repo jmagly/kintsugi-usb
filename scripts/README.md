@@ -12,7 +12,7 @@ scripts/
 ├── check-drive-health.sh        # ported from sysops — SMART / NVMe / disk-level health
 ├── benchmark-inference.sh       # ported from sysops — NFR-1.3/1.4 measurement (llama.cpp + Ollama tok/s)
 └── usb-toolkit/
-    ├── build-custom-iso.sh      # ported — Cubic-driven custom Ubuntu ISO build
+    ├── build-custom-iso.sh      # ported — live-build-driven custom Ubuntu ISO build (ADR-007)
     ├── first-boot-setup.sh      # ported — on-USB first-boot config (paths, services, perms)
     ├── start-ai.sh              # ported — AI stack launcher (needs refactor per ADR-005 §D3)
     └── usb-test-harness.sh      # ported — 527-line automated test harness (PASS/FAIL/SKIP/WARN + JSON)
@@ -88,7 +88,7 @@ If you are cloning this repo to build your own Kintsugi-like USB, see `../docs/t
 cp ../manifest/models-recommended.yaml ../manifest/models-chosen.yaml
 # edit models-chosen.yaml to taste
 
-# 2. Build a master USB (interactive Cubic step)
+# 2. Build a master USB (scripted live-build step, ADR-007)
 sudo ./usb-toolkit/build-custom-iso.sh
 
 # 3. Populate models into your in-progress master
