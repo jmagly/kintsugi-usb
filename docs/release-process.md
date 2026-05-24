@@ -2,7 +2,7 @@
 
 **Audience**: maintainer (and future co-maintainers). This is the playbook for cutting a Kintsugi USB release.
 **Versioning**: CalVer `YYYY.M.PATCH` (no leading zeros), per `.claude/rules/versioning.md`.
-**Target release**: `v2026.5.0` (first tagged release; supersedes the v2026.5.0 framing in Gitea [#7](https://git.integrolabs.net/roctinam/kintsugi-usb/issues/7)).
+**Target release**: `v2026.5.0` (first tagged release; supersedes the earlier `v0.1.0` framing in Gitea [#7](https://git.integrolabs.net/roctinam/kintsugi-usb/issues/7)).
 
 ## Prerequisites (one-time setup)
 

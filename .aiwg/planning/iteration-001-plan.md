@@ -7,6 +7,8 @@
 **Extends**: [ADR-005](../architecture/adr-005-toolkit-scope-and-user-driven-models.md) — still authoritative for models and dual-runtime posture
 **License**: MIT (ADR-001 RESOLVED per ADR-006 §D6; `LICENSE` committed)
 
+> **Amendment — 2026-05-24 (build/imaging audit).** The `audit-2026-05-24` review (Gitea #34–#42) found the as-built toolkit produced a single `live-build` ISO with **no Ventoy assembly and no persistence** — so it could not satisfy this plan's own acceptance gate. Per the recorded triage decisions, iteration-1 scope is **amended in place** (precedent: the ADR-005 scope amendment, #25) to make a **Ventoy multi-boot `.img` with 32 GiB persistence** the acceptance artifact. New stories **US-IMG-005** (Ventoy assembly, #42), **US-IMG-006** (persistence, #34), and **US-RESCUE-001** (rescue catalog, #35) are added below; **US-WIZ-004** and **US-IMG-002** are corrected accordingly. The first tagged release **v2026.5.0 now includes the full Ventoy build and stays gated on the US-WIZ-004 hardware round-trip (#37)**.
+
 ## Iteration Goal
 
 Ship **v1.0** as a **wizard-first build toolkit**: a forker clones this repo on an Ubuntu 24.04 host, runs `./scripts/kintsugi-build`, answers a short series of TUI prompts, and ends up with a personalised flashable `.img.zst` plus a sha256 checksum. The wizard orchestrates every downstream script (ISO build, model pull, agentic-framework install, master prep, image creation) and persists the answer-set as a replayable profile. The **self-build-from-fresh-clone** experience is the primary product for v1.0; the distributed signed image recedes.
@@ -33,7 +35,7 @@ LICENSE is no longer a decision — it is MIT and committed. This cluster covers
 
 #### US-010b — THIRD-PARTY-LICENSES.md (bundled binaries only)
 **Priority**: P0 | **Size**: S | **ADR**: ADR-006 §D6, ADR-005 §D5
-**Acceptance**: `manifest/THIRD-PARTY-LICENSES.md` enumerates components actually bundled in the base ISO: Ventoy (GPLv3), `llama.cpp` (MIT), Ollama (Apache-2.0), VS Code (Microsoft Software License Terms), GitHub Copilot extension (Microsoft), `gh` CLI (MIT), any rescue ISOs selected by default. Each entry: upstream URL, pinned version, SPDX id, redistribution note. Explicit exclusion clause: "model weights are user-pulled and not redistributed"; "agentic-framework installers are user-selected and not redistributed".
+**Acceptance**: `manifest/THIRD-PARTY-LICENSES.md` enumerates components actually bundled in the base ISO: Ventoy (GPLv3), `llama.cpp` (MIT), Ollama (Apache-2.0), VS Code (Microsoft Software License Terms), GitHub Copilot extension (Microsoft), `gh` CLI (MIT), and the default rescue ISOs (SystemRescue, Clonezilla, GParted Live, Memtest86+ — US-RESCUE-001). Each entry: upstream URL, pinned version, SPDX id, redistribution note. Explicit exclusion clause: "model weights are user-pulled and not redistributed"; "agentic-framework installers are user-selected and not redistributed".
 **Dependencies**: Bundled-binary inventory from Cluster 4 (`build-custom-iso.sh` adaptation).
 
 #### US-SEC-001 — SECURITY.md (reduced scope)
@@ -161,7 +163,7 @@ The wizard is the integrating surface. Every other cluster's deliverable is invo
 
 #### US-WIZ-004 — Wizard-to-pipeline integration smoke-test
 **Priority**: P0 | **Size**: S | **ADR**: ADR-006 Consequences
-**Acceptance**: End-to-end test on a real Ubuntu 24.04 host: wizard drives `build-custom-iso.sh` → `kintsugi-models pull` → `kintsugi-frameworks install` → `prep-master.sh` → `create-base-image.sh` producing a flashable `.img.zst`. Documented as the iteration-acceptance procedure in `docs/toolkit-guide.md`. Captures typical timing and disk-use figures (for `docs/wizard-guide.md` expectations section — not estimates, just measured figures).
+**Acceptance**: End-to-end test on a real Ubuntu 24.04 host: wizard drives `build-custom-iso.sh` → `kintsugi-models pull` → `kintsugi-frameworks install` → `make-ventoy-image.sh` (Ventoy bootloader + 32 GiB persistence + rescue ISOs, US-IMG-005/006) → `prep-master.sh` → `create-image.sh` producing a flashable **Ventoy** `.img.zst`. Flash to a fleet USB and boot it: `usb-test-harness.sh` returns PASS **incl. TC-6 persistence** (a pulled model survives reboot). Documented as the iteration-acceptance procedure in `docs/toolkit-guide.md`. Captures typical timing and disk-use figures (for `docs/wizard-guide.md` expectations section — not estimates, just measured figures).
 **Dependencies**: All Cluster 5 + predecessor clusters complete.
 
 ---
@@ -180,15 +182,30 @@ Agent role: **Build engineer + release manager**.
 **Acceptance**: Sanitizes secrets (`ai-keys.env`, shell history, SSH known_hosts, `*.env`); zero-fills free space; flushes caches; idempotent. Preserves `/payload/models/`, `/data/models/user/`, `/data/frameworks/user/` but warns on secret-pattern hits inside them. Secret-pattern grep (`BEGIN OPENSSH PRIVATE KEY`, `sk-ant-`, `sk-`, `ghp_`, `AKIA`, internal hostnames) aborts on hit. Callable non-interactively from wizard.
 **Dependencies**: LICENSE (DONE).
 
-#### US-IMG-002 — create-base-image.sh
+#### US-IMG-002 — create-image.sh
 **Priority**: P0 | **Size**: M | **ADR**: ADR-002 step 2
-**Acceptance**: `dd` → `zstd -T0 -19` → `kintsugi-<name>-vX.Y.Z.img.zst` + `.sha256`. No `.minisig` for v1.0 (deferred). Refuses wrong target with anti-pattern banner. Idempotent. Callable non-interactively from wizard.
-**Dependencies**: prep-master.sh clean.
+**Acceptance**: Takes a source image (the Ventoy `.img` from US-IMG-005, or an `.iso`) → `zstd --long -19` → `kintsugi-<name>-v2026.5.0.img.zst` + `.sha256`. No `.minisig` for v1.0 (deferred, #19). Idempotent. Callable non-interactively from wizard. (Shipped as `scripts/create-image.sh`; the plan's earlier `create-base-image.sh` name is retired per the #36 decision.)
+**Dependencies**: prep-master.sh clean; US-IMG-005 (Ventoy `.img`).
+
+#### US-IMG-005 — make-ventoy-image.sh (Ventoy assembly) [#42]
+**Priority**: P0 | **Size**: M | **ADR**: ADR-007; audit decision #42
+**Acceptance**: Assembles a loopback Ventoy `.img`: installs the Ventoy bootloader (UEFI + legacy), copies the Kintsugi live ISO + selected rescue ISOs (US-RESCUE-001) into the Ventoy layout, and wires persistence (US-IMG-006). `--dry-run` validates inputs + prints the layout without privileged ops; shellcheck clean; SPDX header; callable non-interactively from the wizard. Output `.img` feeds `create-image.sh` (US-IMG-002). Shipped as `scripts/usb-toolkit/make-ventoy-image.sh`. Boot/persistence validation is owned by US-WIZ-004 (#37).
+**Dependencies**: adapted `build-custom-iso.sh` (US-PORT-001); US-RESCUE-001; US-IMG-006.
+
+#### US-IMG-006 — Ventoy persistence provisioning [#34]
+**Priority**: P0 | **Size**: S | **ADR**: audit decision #34 (LUKS-encrypted `/data` remains out of scope — NFR-4.3 stretch)
+**Acceptance**: Inside US-IMG-005, create a Ventoy persistence `.dat` (wizard-prompted size, **default 32 GiB**, ext4 `casper-rw`) bound to the Kintsugi ISO via `ventoy/ventoy.json`. `first-boot-setup.sh` `/data/...` dirs (models, frameworks, `ai-keys.env`) land on the persistence overlay, not tmpfs. Validated by `usb-test-harness.sh` TC-6 under US-WIZ-004.
+**Dependencies**: US-IMG-005.
+
+#### US-RESCUE-001 — kintsugi-rescue CLI + rescue-ISO manifest [#35]
+**Priority**: P1 | **Size**: M | **ADR**: audit decision #35
+**Acceptance**: Parallel to `kintsugi-models` / `kintsugi-frameworks`. `manifest/rescue-isos-recommended.yaml` lists the default bundle (SystemRescue, Clonezilla, GParted Live, Memtest86+) with pinned versions + upstream sha256. `kintsugi-rescue` subcommands `list` / `add <slug>` / `fetch` / `verify`, plus a custom-ISO add path. The wizard's rescue-ISO selection step (already in the US-WIZ-001 planned flow, currently unimplemented) is wired to this catalog. 🔬 Version pins + sha256 require fetching the real ISOs (network); a forensics-distro survey (CAINE / Tsurugi / Kali / Parrot) must check **redistribution licensing** before any addition to `THIRD-PARTY-LICENSES.md`.
+**Dependencies**: manifest schema; feeds US-IMG-005 + the US-WIZ-001 rescue-selection step.
 
 #### US-IMG-003 — publish-release.sh (NFS target)
 **Priority**: P0 | **Size**: M | **ADR**: ADR-006 §D4
 **Acceptance**: Copies `.img.zst` + `.sha256` + `manifest.json` + `models-recommended.yaml` + `agentic-frameworks-recommended.yaml` to `/mnt/warehouse/releases/kintsugi-usb/<version>/`. NFS mount path configurable via `KINTSUGI_NFS_ROOT` env var (default `/mnt/warehouse/releases/kintsugi-usb`). Updates local `releases.json` index at the target root. Refuses overwrite unless `--force`. Optionally tags the git commit with `vX.Y.Z`. No Gitea release artifact attachment for images in v1.0 (Gitea gets source tarball + changelog + manifests only, via normal `gh release create` or Gitea UI flow). Shellcheck clean.
-**Dependencies**: create-base-image.sh; tag + CHANGELOG.
+**Dependencies**: create-image.sh; make-ventoy-image.sh (US-IMG-005); tag + CHANGELOG.
 
 #### US-IMG-004 — manifest.json per release
 **Priority**: P0 | **Size**: S | **ADR**: ADR-002, ADR-005 §D5, ADR-006 §D6
@@ -203,7 +220,7 @@ Agent role: **Docs engineer**.
 
 #### US-DOCS-001 — docs/toolkit-guide.md (EXPAND from stub)
 **Priority**: P0 | **Size**: M | **ADR**: ADR-005 §D1, ADR-006 §D1
-**Acceptance**: Full external-builder walkthrough. Covers: cloning the repo; running `./scripts/kintsugi-build`; wizard screens (described textually with sample prompts and expected answers); editing manifests (models, frameworks) before build; non-interactive mode via profile; running `build-custom-iso.sh` / `prep-master.sh` / `create-base-image.sh` directly for advanced use; `kintsugi-models` and `kintsugi-frameworks` CLI reference; `usb-test-harness.sh` invocation.
+**Acceptance**: Full external-builder walkthrough. Covers: cloning the repo; running `./scripts/kintsugi-build`; wizard screens (described textually with sample prompts and expected answers); editing manifests (models, frameworks) before build; non-interactive mode via profile; running `build-custom-iso.sh` / `make-ventoy-image.sh` / `prep-master.sh` / `create-image.sh` directly for advanced use; `kintsugi-models` and `kintsugi-frameworks` CLI reference; `usb-test-harness.sh` invocation.
 **Dependencies**: All Clusters 2/3/4/5/6 scripts stable.
 
 #### US-DOCS-002 — docs/update-strategy.md (EXPAND from stub)
@@ -214,7 +231,7 @@ Agent role: **Docs engineer**.
 #### US-DOCS-003 — docs/flash-image.md (sha256-only verification for v1.0)
 **Priority**: P0 | **Size**: M | **ADR**: ADR-006 §D5
 **Acceptance**: Non-technical friendly; covers Etcher (primary), `dd` (Linux/macOS fallback), Rufus (Windows fallback); anti-pattern callouts before every destructive command; **sha256 verification one-liners for Linux / macOS / Windows PowerShell** (minisign commands deferred to v1.1; placeholder note at bottom: "Signature verification arrives in v1.1. See ADR-006 §D5 for the rationale and iteration-2 plan."); includes post-flash steps: `kintsugi-models pull`, `kintsugi-frameworks install`, `gh auth login` (for Copilot); boot-test verification.
-**Dependencies**: create-base-image.sh output format finalised.
+**Dependencies**: create-image.sh output format finalised.
 
 #### US-DOCS-004 — docs/wizard-guide.md (NEW — dedicated wizard UX reference)
 **Priority**: P0 | **Size**: M | **ADR**: ADR-006 §D1
@@ -279,7 +296,7 @@ The wizard (Cluster 5) is the integration surface. Every other cluster delivers 
 3. **`agentic-frameworks-recommended.yaml` (US-FW-001)** blocks `kintsugi-frameworks` CLI (US-FW-002) and install-recipe implementations (US-FW-003).
 4. **`kintsugi-models` CLI (US-MODEL-002) and `kintsugi-frameworks` CLI (US-FW-002)** block `first-boot-setup.sh` adaptation (US-PORT-002) and the wizard (US-WIZ-001).
 5. **Adapted `build-custom-iso.sh` (US-PORT-001)** blocks the wizard's ISO-build step (US-WIZ-001) and the bundled-binary inventory for THIRD-PARTY-LICENSES (US-010b) and manifest.json (US-IMG-004).
-6. **`prep-master.sh` + `create-base-image.sh` (US-IMG-001, US-IMG-002)** block wizard end-stage (US-WIZ-001) and publish (US-IMG-003).
+6. **`make-ventoy-image.sh` (US-IMG-005, #42) + `prep-master.sh` (US-IMG-001) + `create-image.sh` (US-IMG-002)** block the wizard end-stage (US-WIZ-001) and publish (US-IMG-003). US-IMG-005 in turn depends on the rescue catalog (US-RESCUE-001, #35) and persistence (US-IMG-006, #34).
 7. **US-IMG-SPIKE** gates the final decision on whether any payload-tarball concept survives; most likely it collapses into the base image.
 8. **All Cluster 2/3/4 scripts callable non-interactively** is a hard prerequisite for wizard integration (US-WIZ-001).
 9. **Full wizard-to-pipeline smoke (US-WIZ-004)** is the iteration-acceptance gate.
@@ -325,7 +342,7 @@ Iteration 1 is DONE when:
 - `manifest/THIRD-PARTY-LICENSES.md` enumerates every bundled binary actually in the v1.0 base ISO.
 - `SECURITY.md` committed with sha256 integrity story + v1.1 signing commitment.
 - `scripts/kintsugi-build` runs end-to-end from a fresh clone on a clean Ubuntu 24.04 host.
-- **Iteration-acceptance smoke (US-WIZ-004)**: a user runs `./scripts/kintsugi-build`, picks defaults, obtains `.img.zst` + `.sha256` + `kintsugi-build-profile.yaml`; `./scripts/kintsugi-build --from-profile <file>` reproduces the same artifact-set; flashing the image to a fleet USB and running `usb-test-harness.sh` on that USB returns PASS.
+- **Iteration-acceptance smoke (US-WIZ-004)**: a user runs `./scripts/kintsugi-build`, picks defaults, obtains a flashable **Ventoy** `.img.zst` + `.sha256` + `kintsugi-build-profile.yaml`; `./scripts/kintsugi-build --from-profile <file>` reproduces the same artifact-set; flashing the image to a fleet USB and booting it returns `usb-test-harness.sh` PASS **including TC-6 persistence (a pulled model survives reboot)**.
 - `publish-release.sh` successfully copies the image set to the warehouse NFS mount; `releases.json` index updated.
 - v1.0.0 git tag created; CHANGELOG entry committed.
 - `README.md` updated with MIT badge, one-command wizard invocation, post-flash `kintsugi-models pull` / `kintsugi-frameworks install` / `gh auth login` hints, NFS publish note, and a sha256-verification paragraph (with "signing arrives in v1.1" line).
@@ -368,7 +385,7 @@ Issues at `https://git.integrolabs.net/roctinam/kintsugi-usb/issues` — one per
 - `docs/physical-test-guide.md`, `docs/toolkit-guide.md`, `docs/update-strategy.md`, `docs/flash-image.md`, `docs/wizard-guide.md` (NEW)
 - `scripts/kintsugi-build` (NEW — central deliverable)
 - `scripts/usb-toolkit/` — `build-custom-iso.sh`, `first-boot-setup.sh`, `start-ai.sh`, `usb-test-harness.sh`, `kintsugi-models`, `kintsugi-frameworks` (NEW)
-- `scripts/prep-master.sh`, `scripts/create-base-image.sh`, `scripts/publish-release.sh` (all NEW/iteration-1)
+- `scripts/prep-master.sh`, `scripts/create-image.sh`, `scripts/usb-toolkit/make-ventoy-image.sh`, `scripts/publish-release.sh` (all NEW/iteration-1)
 - `scripts/check-drive-health.sh`, `scripts/benchmark-inference.sh`
 - `manifest/models-recommended.yaml` (committed; refinement pending)
 - `manifest/agentic-frameworks-recommended.yaml` (NEW — iteration-1 deliverable)
