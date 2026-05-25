@@ -1,0 +1,59 @@
+#!/bin/bash
+# kintsugi-install-hermes — opt-in, on-demand installer for the Hermes agent.
+#
+# Hermes (NousResearch hermes-agent) is an AIWG-supported provider, but unlike
+# the other agentic CLIs it installs PER-USER into ~/.hermes via an upstream
+# curl|bash script and pulls a heavyweight Python venv (+ models). Baking that
+# into the live squashfs at build time doesn't fit (per-user home, large), so
+# Kintsugi ships this thin opt-in wrapper instead: run it once, in your live
+# session, when you actually want Hermes.
+#
+# REQUIRES NETWORK. The other baked CLIs (claude/codex/opencode/copilot/openclaw)
+# work offline; Hermes is fetched on demand and therefore needs connectivity.
+#
+# Auth/keys are never handled here — that stays your responsibility post-install
+# (ADR-006 §D5), same as every other agentic tool on this drive.
+#
+# Usage:  kintsugi-install-hermes [--yes]
+# Exit:   0 installed / 1 declined or no network / 2 install failed
+
+set -u
+UPSTREAM="https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh"
+
+c_b="\033[1m"; c_y="\033[33m"; c_r="\033[31m"; c_x="\033[0m"
+say()  { echo -e "$*"; }
+warn() { echo -e "${c_y}!${c_x} $*" >&2; }
+die()  { echo -e "${c_r}ERROR:${c_x} $*" >&2; exit "${2:-1}"; }
+
+ASSUME_YES=0
+[ "${1:-}" = "--yes" ] && ASSUME_YES=1
+
+say "${c_b}Kintsugi — install Hermes agent (opt-in)${c_x}"
+say "  This fetches and runs NousResearch's installer:"
+say "    $UPSTREAM"
+say "  It installs into your home directory (~/.hermes) and needs network access."
+say "  Hermes is the one AIWG provider not pre-baked on this drive (size/per-user)."
+say ""
+
+# Network preflight — Hermes cannot be installed offline.
+if ! curl -fsS --max-time 8 -o /dev/null "https://raw.githubusercontent.com" 2>/dev/null; then
+    die "No network reachable. Connect to the internet and re-run (Hermes is fetched on demand)." 1
+fi
+
+if [ "$ASSUME_YES" != "1" ]; then
+    printf "Proceed with the Hermes install? [y/N] "
+    read -r ans
+    case "$ans" in
+        y|Y|yes|YES) ;;
+        *) say "Aborted — nothing installed."; exit 1 ;;
+    esac
+fi
+
+say "Installing Hermes ..."
+if curl -fsSL "$UPSTREAM" | bash; then
+    say "${c_b}✓ Hermes installed.${c_x} It lives under ~/.hermes."
+    say "  Next: configure your provider/API auth per Hermes' own docs (not baked here)."
+    exit 0
+else
+    die "Hermes install failed (see output above)." 2
+fi

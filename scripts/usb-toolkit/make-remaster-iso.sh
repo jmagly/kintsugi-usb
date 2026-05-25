@@ -54,7 +54,7 @@ htop iotop lsof dmidecode lshw pciutils usbutils \
 vim nano tmux jq git pv tree ncdu p7zip-full"
 
 # Runtime scripts injected into the live filesystem's /usr/local/bin.
-RUNTIME_SCRIPTS="start-ai.sh usb-test-harness.sh first-boot-setup.sh kintsugi-models kintsugi-frameworks"
+RUNTIME_SCRIPTS="start-ai.sh usb-test-harness.sh first-boot-setup.sh kintsugi-models kintsugi-frameworks kintsugi-install-hermes"
 
 while [ $# -gt 0 ]; do
     case "$1" in
