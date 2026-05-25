@@ -21,3 +21,5 @@
 ## [2026-05-24 04:01] update | build-name default → CalVer (kintsugi-v2026.5.0-); runbook review gate (#33) added
 ## [2026-05-24 05:14] update | sysops-drift reconciliation: n5pro SOP → sysops; fleet topology externalized; test hostnames genericized; carries-vs-authors reframe (R-14)
 ## [2026-05-24 05:16] update | .aiwg/risks/risk-list.md — 2026-05-24 sysops-drift amendment (R-14 advanced, R-15/#33 dormant)
+## [2026-05-24 20:33] update | amend iteration-001-plan.md + rewrite roadmap.md for Ventoy/persistence audit scope (v2026.5.0 gated on #37)
+## [2026-05-24 20:45] update | reconcile docs to wizard+Ventoy flow; mark doc-reconciliation done in roadmap
