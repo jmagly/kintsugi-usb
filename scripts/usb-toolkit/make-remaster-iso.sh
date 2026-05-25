@@ -19,6 +19,10 @@
 #   --packages "..."    Override the injected rescue-package set.
 #   --livefs-edit <bin> Path to the livefs-edit entry point (default: the venv
 #                       at ~/kintsugi-builds/_tools/livefs-venv/bin/livefs-edit).
+#   --with-agentic      Pre-install the agentic CLI platforms in-chroot
+#                       (claude-code, codex, opencode, copilot, openclaw + aider).
+#   --with-ai-stack     Pre-install the offline AI core in-chroot (Ollama + the
+#                       mikefarah yq that kintsugi-models/-frameworks need). #43.
 #   --dry-run           Print the livefs-edit invocation; do not run it.
 #
 # Pass 1 (this script) injects the reliable content: rescue packages + the
@@ -45,6 +49,7 @@ SCRIPTS_DIR="$SELF_DIR"
 LIVEFS_EDIT="${LIVEFS_EDIT:-$HOME/kintsugi-builds/_tools/livefs-venv/bin/livefs-edit}"
 DRY_RUN=0
 WITH_AGENTIC=0          # --with-agentic: also pre-install the agentic CLI platforms
+WITH_AI_STACK=0         # --with-ai-stack: also pre-install the offline AI core (Ollama + yq), #43
 # Curated, apt-installable rescue set (proven installable on noble during the
 # live-build investigation). The full catalog stays manifest-driven elsewhere.
 PACKAGES="e2fsprogs xfsprogs btrfs-progs dosfstools ntfs-3g exfatprogs parted gdisk \
@@ -65,6 +70,7 @@ while [ $# -gt 0 ]; do
         --livefs-edit) LIVEFS_EDIT=$2; shift 2 ;;
         --dry-run)      DRY_RUN=1; shift ;;
         --with-agentic) WITH_AGENTIC=1; shift ;;
+        --with-ai-stack) WITH_AI_STACK=1; shift ;;
         -h|--help)     sed -n '2,40p' "$0" | sed 's/^# \?//'; exit 0 ;;
         -*)            die "Unknown flag: $1" ;;
         *)             die "Unexpected argument: $1" ;;
@@ -99,6 +105,15 @@ if [ "$WITH_AGENTIC" = "1" ]; then
     ACTIONS+=( --python "base = ctxt.edit_squashfs(get_squash_names(ctxt)[0]); ctxt.run(['chroot', base, 'bash', '/tmp/agentic-provision.sh'])" )
 fi
 
+# Optionally pre-install the offline AI core (Ollama + mikefarah yq) — the drive's
+# headline feature (#43, ADR-005 §D2). Same chroot-exec mechanism as --with-agentic.
+if [ "$WITH_AI_STACK" = "1" ]; then
+    AISTACK_SRC="$SCRIPTS_DIR/ai-stack-provision.sh"
+    [ -r "$AISTACK_SRC" ] || die "AI-stack provisioner not found: $AISTACK_SRC"
+    ACTIONS+=( --cp "$AISTACK_SRC" "\$LAYERS[0]/tmp/ai-stack-provision.sh" )
+    ACTIONS+=( --python "base = ctxt.edit_squashfs(get_squash_names(ctxt)[0]); ctxt.run(['chroot', base, 'bash', '/tmp/ai-stack-provision.sh'])" )
+fi
+
 head1 "make-remaster-iso v${VERSION}"
 info "  Base ISO:     $BASE ($(du -h "$BASE" | cut -f1))"
 info "  Output:       $OUTPUT"
@@ -106,6 +121,7 @@ info "  livefs-edit:  $LIVEFS_EDIT"
 info "  Packages:     $(echo "$PACKAGES" | wc -w) rescue packages"
 info "  Scripts:      $RUNTIME_SCRIPTS"
 if [ "$WITH_AGENTIC" = "1" ]; then info "  Agentic:      claude-code, codex, opencode, copilot, openclaw, aider (pre-installed in-chroot)"; fi
+if [ "$WITH_AI_STACK" = "1" ]; then info "  AI core:      Ollama + mikefarah yq (offline LLM runtime; models pulled post-flash) [#43]"; fi
 info ""
 info "  livefs-edit \"$BASE\" \"$OUTPUT\" \\"
 printf '    %s\n' "${ACTIONS[@]}"
