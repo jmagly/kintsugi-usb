@@ -43,7 +43,10 @@ record() { echo "$1" >> "$MANIFEST"; }
 log "=== Kintsugi AI-stack provisioning ==="
 
 apt-get update >>"$LOG" 2>&1 || true
-apt-get install -y --no-install-recommends curl ca-certificates >>"$LOG" 2>&1 || true
+# curl/ca-certificates for fetch; zstd is REQUIRED by modern Ollama's installer
+# (its release artifacts are .tar.zst — install.sh hard-errors without zstd);
+# findutils/gawk satisfy the installer's `require curl awk grep sed tee xargs` gate.
+apt-get install -y --no-install-recommends curl ca-certificates zstd findutils gawk >>"$LOG" 2>&1 || true
 
 # --- mikefarah/yq (runtime dep of kintsugi-models / kintsugi-frameworks) -------
 log "installing mikefarah yq ${YQ_VERSION} ..."
