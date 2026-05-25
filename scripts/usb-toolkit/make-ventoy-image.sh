@@ -192,8 +192,17 @@ info "  loop: $LOOPDEV"
 
 head1 "Installing Ventoy to $LOOPDEV"
 # Ventoy installs the bootloader + lays out the exFAT data partition.
-"$VENTOY_BIN" -I -g "$LOOPDEV" || die "Ventoy install failed" 2
+# -I force-install, -g GPT, -s secure-boot support. Ventoy2Disk.sh prompts
+# "Continue? (y/n)" twice — feed both for non-interactive use.
+printf 'y\ny\n' | "$VENTOY_BIN" -I -g -s "$LOOPDEV" || die "Ventoy install failed" 2
 partprobe "$LOOPDEV" 2>/dev/null || true
+if command -v udevadm >/dev/null 2>&1; then udevadm settle 2>/dev/null || true; fi
+# Loop partition nodes can lag behind the table write; wait for p1 to appear.
+for _i in $(seq 1 10); do
+    [ -b "${LOOPDEV}p1" ] && break
+    sleep 1; partprobe "$LOOPDEV" 2>/dev/null || true
+done
+[ -b "${LOOPDEV}p1" ] || die "Ventoy partition ${LOOPDEV}p1 did not appear after install" 2
 
 head1 "Labeling data partition: $DATA_LABEL"
 # Friendly, end-user-facing label — the default 'Ventoy' confuses recipients.
