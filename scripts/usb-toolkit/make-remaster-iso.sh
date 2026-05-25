@@ -105,7 +105,7 @@ info "  Output:       $OUTPUT"
 info "  livefs-edit:  $LIVEFS_EDIT"
 info "  Packages:     $(echo "$PACKAGES" | wc -w) rescue packages"
 info "  Scripts:      $RUNTIME_SCRIPTS"
-if [ "$WITH_AGENTIC" = "1" ]; then info "  Agentic:      claude-code, codex, opencode, copilot, aider (pre-installed in-chroot)"; fi
+if [ "$WITH_AGENTIC" = "1" ]; then info "  Agentic:      claude-code, codex, opencode, copilot, openclaw, aider (pre-installed in-chroot)"; fi
 info ""
 info "  livefs-edit \"$BASE\" \"$OUTPUT\" \\"
 printf '    %s\n' "${ACTIONS[@]}"
