@@ -29,6 +29,8 @@ The 2026-05-24 build/imaging audit (`audit-2026-05-24`, Gitea #34–#42) is the 
 
 The release is blocked behind the Ventoy build. This lane closes that gap. Most of it is code (no maintainer hardware); the exceptions are called out.
 
+> **Build-tool pivot — [ADR-008](../architecture/adr-008-build-tooling-remaster-stock-iso.md) (2026-05-25).** The first real build proved the Ubuntu-shipped `live-build` (3.0~a57) cannot build a bootable noble ISO (hardcoded 2011-era EOL boot/theme packages; no working EFI stage). The custom-ISO builder is being rebuilt to **remaster the stock, already-bootable Ubuntu 24.04 ISO** (non-interactive; reuses the chroot-hook content logic; also resolves native UEFI). Supersedes ADR-007. The Ventoy assembly (#42), persistence (#34), and wizard wiring (#36) are unaffected — only the ISO-production step changes.
+
 | # | Work | Issue | State |
 |---|------|-------|-------|
 | 1 | **Ventoy `.img` assembler** — bootloader + persistence + rescue/Kintsugi ISOs into the layout. | #42 | **code landed** (`--dry-run`/validation offline-verified); hardware build → #37 |
