@@ -20,10 +20,9 @@
 set -u
 UPSTREAM="https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh"
 
-c_b="\033[1m"; c_y="\033[33m"; c_r="\033[31m"; c_x="\033[0m"
-say()  { echo -e "$*"; }
-warn() { echo -e "${c_y}!${c_x} $*" >&2; }
-die()  { echo -e "${c_r}ERROR:${c_x} $*" >&2; exit "${2:-1}"; }
+c_b="\033[1m"; c_r="\033[31m"; c_x="\033[0m"
+say() { echo -e "$*"; }
+die() { echo -e "${c_r}ERROR:${c_x} $*" >&2; exit "${2:-1}"; }
 
 ASSUME_YES=0
 [ "${1:-}" = "--yes" ] && ASSUME_YES=1
