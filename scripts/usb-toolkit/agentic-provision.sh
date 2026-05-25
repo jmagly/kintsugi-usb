@@ -59,7 +59,11 @@ else
 fi
 
 if command -v pipx >/dev/null 2>&1; then
-    try "aider" pipx install --global aider-chat || try "aider" pipx install aider-chat
+    # noble ships pipx 1.4.3 (no --global). PIPX_HOME/PIPX_BIN_DIR (set above)
+    # already place venvs in /opt/pipx and bin symlinks in /usr/local/bin (on PATH),
+    # so plain `pipx install` is system-wide here. aider is a bonus tool, not an
+    # AIWG provider — its failure is non-fatal.
+    try "aider" pipx install aider-chat
 fi
 
 # --- Summary -------------------------------------------------------------
