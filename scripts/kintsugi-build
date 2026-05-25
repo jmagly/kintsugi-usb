@@ -1,6 +1,14 @@
 #!/bin/bash
-# kintsugi-build — single-command wizard for building a personalized
-# Kintsugi USB master ISO. Central iteration-1 deliverable per ADR-006 §D1.
+# kintsugi-build — single-command wizard for building a personalized Kintsugi
+# USB. Central iteration-1 deliverable (ADR-006 §D1); auto-chains the full
+# pipeline to a flashable .img.zst (#36).
+#
+# Pipeline (ADR-008 remaster; supersedes the dead live-build path):
+#   1. make-remaster-iso.sh   — remaster the stock Ubuntu ISO (rescue tools +
+#                               Kintsugi scripts [+ agentic CLIs] [+ offline AI])
+#   2. make-ventoy-image.sh   — assemble a Ventoy .img (bootloader + persistence
+#                               + the Kintsugi ISO [+ rescue ISOs])           (#34/#42)
+#   3. create-image.sh        — compress to <name>.img.zst + .sha256
 #
 # Usage:
 #   ./scripts/kintsugi-build                         Interactive TUI (default)
@@ -8,21 +16,29 @@
 #                                                    (interactive confirm before build)
 #   ./scripts/kintsugi-build --non-interactive <file>  Replay with NO confirm
 #   ./scripts/kintsugi-build --dry-run [--from-profile <file>]
-#                                                    Show choices + build command; exit
+#                                                    Show choices + chain; exit
 #   ./scripts/kintsugi-build --help                  This help
 #
-# Output:
-#   ~/kintsugi-builds/<build_name>/build-profile.yaml     Resumable profile
-#   ~/kintsugi-builds/<build_name>/build.log              Full build output
-#   ~/kintsugi-builds/<build_name>/*.iso                  Final master ISO
+# Output (under ~/kintsugi-builds/<build_name>/):
+#   build-profile.yaml     Resumable profile
+#   build.log              Full build output
+#   <build_name>.iso       Remastered Kintsugi live ISO
+#   <build_name>-ventoy.img  Assembled Ventoy disk image
+#   <build_name>.img.zst + .sha256   Distributable artifact (flash this)
+#
+# Key env (override defaults):
+#   KINTSUGI_BASE_ISO       Stock Ubuntu/Xubuntu live ISO to remaster
+#   KINTSUGI_LIVEFS_EDIT    Path to the livefs-edit entry point
+#   KINTSUGI_VENTOY_BIN     Path to Ventoy2Disk.sh
+#   KINTSUGI_BUILDS_ROOT    Where to create build dirs (default: $HOME/kintsugi-builds)
 #
 # Widget library: whiptail by default (universal on Ubuntu). Falls back to
-# plain prompts when whiptail is absent. No gum / dialog support in v1.0.
+# plain prompts when whiptail is absent.
 
 set -euo pipefail
 
-VERSION="0.1.0"
-SCHEMA_VERSION=1
+VERSION="0.2.0"
+SCHEMA_VERSION=2
 
 # ---------------------------------------------------------------------------
 # Paths + defaults
@@ -31,21 +47,37 @@ SCHEMA_VERSION=1
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SELF_DIR}/.." && pwd)"
 
-BUILD_SCRIPT="${REPO_ROOT}/scripts/usb-toolkit/build-custom-iso.sh"
-MODELS_MANIFEST="${REPO_ROOT}/manifest/models-recommended.yaml"
-FRAMEWORKS_MANIFEST="${REPO_ROOT}/manifest/agentic-frameworks-recommended.yaml"
+USB_TOOLKIT="${REPO_ROOT}/scripts/usb-toolkit"
+REMASTER_SCRIPT="${USB_TOOLKIT}/make-remaster-iso.sh"
+VENTOY_SCRIPT="${USB_TOOLKIT}/make-ventoy-image.sh"
+IMAGE_SCRIPT="${REPO_ROOT}/scripts/create-image.sh"
 
 BUILDS_ROOT="${KINTSUGI_BUILDS_ROOT:-$HOME/kintsugi-builds}"
 
+# Toolchain locations (ADR-008 remaster path).
+LIVEFS_EDIT="${KINTSUGI_LIVEFS_EDIT:-$BUILDS_ROOT/_tools/livefs-venv/bin/livefs-edit}"
+# Ventoy binary: env, else first match under $BUILDS_ROOT/_ventoy, else PATH.
+default_ventoy() {
+    [ -n "${KINTSUGI_VENTOY_BIN:-}" ] && { echo "$KINTSUGI_VENTOY_BIN"; return; }
+    local v; v=$(find "$BUILDS_ROOT/_ventoy" -name 'Ventoy2Disk.sh' 2>/dev/null | sort | head -1)
+    [ -n "$v" ] && { echo "$v"; return; }
+    command -v Ventoy2Disk.sh 2>/dev/null || echo ""
+}
+VENTOY_BIN="$(default_ventoy)"
+# Stock base ISO: env, else newest *.iso under $BUILDS_ROOT/_base.
+default_base_iso() {
+    [ -n "${KINTSUGI_BASE_ISO:-}" ] && { echo "$KINTSUGI_BASE_ISO"; return; }
+    find "$BUILDS_ROOT/_base" -maxdepth 1 -name '*.iso' 2>/dev/null | sort | tail -1
+}
+
 # Profile fields (populated by interactive prompts or --from-profile)
 PROFILE_BUILD_NAME=""
-PROFILE_INCLUDE_VSCODE=""       # true/false
-PROFILE_INCLUDE_OLLAMA=""       # true/false
-PROFILE_FRAMEWORKS=""           # space-separated list
+PROFILE_BASE_ISO=""
+PROFILE_INCLUDE_AGENTIC=""      # true/false → --with-agentic
+PROFILE_INCLUDE_AI_STACK=""     # true/false → --with-ai-stack (Ollama + yq)
+PROFILE_PERSISTENCE_GIB=""      # integer (#34 default 32)
 PROFILE_MODELS_POST_FLASH=""    # space-separated list (informational)
 PROFILE_SIGN_RELEASE=""         # true/false (v1.0 → false)
-PROFILE_OLLAMA_VERSION=""       # string
-PROFILE_YQ_VERSION=""           # string
 
 # Mode flags
 MODE_INTERACTIVE=1
@@ -68,42 +100,46 @@ die()  { err "$*"; exit 1; }
 # Prerequisite detection
 # ---------------------------------------------------------------------------
 
-have_whiptail() { command -v whiptail &>/dev/null; }
-have_lb()       { command -v lb &>/dev/null; }
+have_whiptail()     { command -v whiptail &>/dev/null; }
 have_mikefarah_yq() { command -v yq &>/dev/null && yq --version 2>&1 | grep -qi mikefarah; }
 
 check_prerequisites() {
     local missing=()
-    have_lb || missing+=("live-build (apt: live-build)")
     have_mikefarah_yq || missing+=("mikefarah/yq (see kintsugi-models --help for install)")
-    [ -x "$BUILD_SCRIPT" ] || missing+=("scripts/usb-toolkit/build-custom-iso.sh (script not executable?)")
-    [ -f "$MODELS_MANIFEST" ] || missing+=("manifest/models-recommended.yaml")
-    [ -f "$FRAMEWORKS_MANIFEST" ] || missing+=("manifest/agentic-frameworks-recommended.yaml")
-    command -v isohybrid >/dev/null 2>&1 || missing+=("isohybrid (apt: syslinux-utils) — finalizes the iso-hybrid image")
+    [ -x "$REMASTER_SCRIPT" ] || missing+=("scripts/usb-toolkit/make-remaster-iso.sh (not executable?)")
+    [ -x "$VENTOY_SCRIPT" ]   || missing+=("scripts/usb-toolkit/make-ventoy-image.sh (not executable?)")
+    [ -x "$IMAGE_SCRIPT" ]    || missing+=("scripts/create-image.sh (not executable?)")
+    [ -x "$LIVEFS_EDIT" ]     || missing+=("livefs-edit ($LIVEFS_EDIT) — install per ADR-008, or set KINTSUGI_LIVEFS_EDIT")
+    [ -n "$VENTOY_BIN" ] && [ -x "$VENTOY_BIN" ] || missing+=("Ventoy2Disk.sh — set KINTSUGI_VENTOY_BIN or place under $BUILDS_ROOT/_ventoy")
+    command -v mksquashfs >/dev/null 2>&1 || missing+=("squashfs-tools (apt: squashfs-tools)")
+    command -v xorriso    >/dev/null 2>&1 || missing+=("xorriso (apt: xorriso)")
+    command -v zstd       >/dev/null 2>&1 || missing+=("zstd (apt: zstd)")
 
     if [ ${#missing[@]} -gt 0 ]; then
         err "Missing prerequisites:"
         for m in "${missing[@]}"; do echo "  - $m" >&2; done
         cat >&2 <<HINT
 
-Install live-build + whiptail + syslinux-utils:
+Install the host toolchain:
   sudo apt-get update
-  sudo apt-get install -y live-build whiptail syslinux-utils
+  sudo apt-get install -y whiptail squashfs-tools xorriso zstd
 
 Install mikefarah/yq:
   sudo wget -O /usr/local/bin/yq \\
     https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
   sudo chmod +x /usr/local/bin/yq
+
+livefs-edit + Ventoy: see ADR-008 and docs/build-guide.md.
 HINT
         exit 1
     fi
 
-    # Storage: build needs ~20 GB free in $BUILDS_ROOT's filesystem.
+    # Storage: the 6 GB ISO + ~16 GB .img + .img.zst need headroom.
     mkdir -p "$BUILDS_ROOT"
     local avail_gb
     avail_gb=$(df -BG --output=avail "$BUILDS_ROOT" | tail -1 | tr -dc '0-9')
-    if [ -n "$avail_gb" ] && [ "$avail_gb" -lt 20 ]; then
-        warn "Only ${avail_gb} GB free at $BUILDS_ROOT (recommended: 20+ GB)"
+    if [ -n "$avail_gb" ] && [ "$avail_gb" -lt 30 ]; then
+        warn "Only ${avail_gb} GB free at $BUILDS_ROOT (recommended: 30+ GB for ISO + .img + .img.zst)"
     fi
 
     if ! have_whiptail; then
@@ -128,7 +164,6 @@ ask_yesno() {
         fi
         return 0
     fi
-    # Plain fallback
     local prompt="[$default]"
     read -rp "$title — $msg ($prompt) " reply
     reply="${reply:-$default}"
@@ -149,32 +184,6 @@ ask_input() {
     echo "${reply:-$default}"
 }
 
-# Multi-choice checkbox. Args: title, message, then tag/description/default triples.
-# Emits space-separated selected tags on stdout.
-ask_checklist() {
-    local title=$1 msg=$2; shift 2
-    if have_whiptail; then
-        local opts=()
-        while [ $# -ge 3 ]; do
-            opts+=("$1" "$2" "$3"); shift 3
-        done
-        whiptail --title "$title" --checklist "$msg" 20 78 10 "${opts[@]}" 3>&1 1>&2 2>&3 | tr -d '"' || true
-        return 0
-    fi
-    # Plain fallback: comma-separated input
-    echo "$title — $msg"
-    local idx=0 defaults=()
-    while [ $# -ge 3 ]; do
-        idx=$((idx + 1))
-        echo "  $idx) $1   $2   (default: $3)"
-        [ "$3" = "ON" ] && defaults+=("$1")
-        shift 3
-    done
-    local default_list="${defaults[*]}"
-    read -rp "Selected (space-separated tags; default = $default_list): " reply
-    echo "${reply:-$default_list}"
-}
-
 # ---------------------------------------------------------------------------
 # YAML profile I/O (mikefarah yq)
 # ---------------------------------------------------------------------------
@@ -182,11 +191,7 @@ ask_checklist() {
 write_profile() {
     local path=$1
     mkdir -p "$(dirname "$path")"
-    # Frameworks as a YAML sequence. Intentional word-splitting of the
-    # space-separated lists into printf repeat-args.
-    local fw_yaml models_yaml
-    # shellcheck disable=SC2086
-    fw_yaml=$(printf '"%s", ' $PROFILE_FRAMEWORKS | sed 's/, $//')
+    local models_yaml
     # shellcheck disable=SC2086
     models_yaml=$(printf '"%s", ' $PROFILE_MODELS_POST_FLASH | sed 's/, $//')
 
@@ -197,16 +202,14 @@ generated_by: "kintsugi-build ${VERSION}"
 generated_at: "$(date -Iseconds)"
 
 build_name: "${PROFILE_BUILD_NAME}"
-include_vscode: ${PROFILE_INCLUDE_VSCODE}
-include_ollama: ${PROFILE_INCLUDE_OLLAMA}
-ollama_version: "${PROFILE_OLLAMA_VERSION:-latest}"
-yq_version: "${PROFILE_YQ_VERSION:-v4.44.3}"
-frameworks: [${fw_yaml}]
+base_iso: "${PROFILE_BASE_ISO}"
+include_agentic: ${PROFILE_INCLUDE_AGENTIC}     # claude-code, codex, opencode, copilot, openclaw, aider
+include_ai_stack: ${PROFILE_INCLUDE_AI_STACK}   # Ollama + mikefarah yq (offline LLM runtime)
+persistence_gib: ${PROFILE_PERSISTENCE_GIB}
 models_post_flash: [${models_yaml}]
 signing:
   enabled: ${PROFILE_SIGN_RELEASE}
-  # v1.0 ships sha256-only (ADR-003 amended, ADR-006 §D5).
-  # Set enabled: true once v1.1 minisign flow lands.
+  # v1.0 ships sha256-only (ADR-006 §D5). Set enabled: true once v1.1 minisign lands.
 YAML
     info "Profile saved: $path"
 }
@@ -219,17 +222,22 @@ read_profile() {
     local sv
     sv=$(yq eval '.schema_version' "$path")
     if [ "$sv" != "$SCHEMA_VERSION" ]; then
-        die "Profile schema_version=$sv (expected $SCHEMA_VERSION)"
+        die "Profile schema_version=$sv (expected $SCHEMA_VERSION). Re-create it with this wizard version."
     fi
 
     PROFILE_BUILD_NAME=$(yq eval '.build_name'        "$path")
-    PROFILE_INCLUDE_VSCODE=$(yq eval '.include_vscode' "$path")
-    PROFILE_INCLUDE_OLLAMA=$(yq eval '.include_ollama' "$path")
-    PROFILE_OLLAMA_VERSION=$(yq eval '.ollama_version // "latest"' "$path")
-    PROFILE_YQ_VERSION=$(yq eval '.yq_version // "v4.44.3"' "$path")
-    PROFILE_FRAMEWORKS=$(yq eval '.frameworks[]' "$path" 2>/dev/null | tr '\n' ' ' | sed 's/ *$//')
+    PROFILE_BASE_ISO=$(yq eval '.base_iso'            "$path")
+    PROFILE_INCLUDE_AGENTIC=$(yq eval '.include_agentic'  "$path")
+    PROFILE_INCLUDE_AI_STACK=$(yq eval '.include_ai_stack' "$path")
+    PROFILE_PERSISTENCE_GIB=$(yq eval '.persistence_gib // 32' "$path")
     PROFILE_MODELS_POST_FLASH=$(yq eval '.models_post_flash[]' "$path" 2>/dev/null | tr '\n' ' ' | sed 's/ *$//')
     PROFILE_SIGN_RELEASE=$(yq eval '.signing.enabled' "$path")
+    # An empty/null base_iso in the profile falls back to auto-detect.
+    # NB: `if` blocks (not `&&`) so a false test isn't the function's exit status
+    # — under `set -e` a trailing failed `[ ... ]` would kill the script silently.
+    if [ "$PROFILE_BASE_ISO" = "null" ]; then PROFILE_BASE_ISO=""; fi
+    if [ -z "$PROFILE_BASE_ISO" ]; then PROFILE_BASE_ISO="$(default_base_iso)"; fi
+    return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -239,45 +247,40 @@ read_profile() {
 run_interactive() {
     head1 "Kintsugi USB Build Wizard v${VERSION}"
     info "Single-command build for a personalized Kintsugi rescue USB."
-    info "Uses live-build; produces a Live ISO you can \`dd\` to a USB or"
-    info "package for distribution."
+    info "Remasters a stock Ubuntu ISO (ADR-008), assembles a Ventoy .img with"
+    info "persistence, and packages a flashable .img.zst."
     echo ""
 
     # 1. Build name
     local default_name
     default_name="kintsugi-v2026.5.0-$(date +%Y%m%d)"
-    PROFILE_BUILD_NAME=$(ask_input "Build name" "Short name for this build (used in ISO filename + output dir)" "$default_name")
+    PROFILE_BUILD_NAME=$(ask_input "Build name" "Short name for this build (used in filenames + output dir)" "$default_name")
 
-    # 2. AI runtimes
-    local ai_choices
-    ai_choices=$(ask_checklist "AI runtimes" \
-        "Which local AI runtimes to include? (both recommended)" \
-        "llama_cpp" "llama.cpp — direct GGUF execution" "ON" \
-        "ollama"    "Ollama — model-management CLI + OpenAI-compat API" "ON")
-    PROFILE_INCLUDE_OLLAMA="false"
-    echo "$ai_choices" | grep -qw "ollama" && PROFILE_INCLUDE_OLLAMA="true"
-    # (llama_cpp choice is informational — llama-server is always installed for offline capability)
+    # 2. Base ISO (ADR-008 remaster input)
+    local default_iso; default_iso="$(default_base_iso)"
+    PROFILE_BASE_ISO=$(ask_input "Base ISO" \
+        "Path to the stock Ubuntu/Xubuntu 24.04 live ISO to remaster (download + verify separately)" \
+        "$default_iso")
 
-    # 3. IDE
-    local ide_yn
-    ide_yn=$(ask_yesno "IDE + Copilot" \
-        "Include VS Code + GitHub Copilot extension + gh CLI?\n\nNote: Copilot requires a paid GitHub subscription, signed in post-flash. Telemetry is disabled by default." \
+    # 3. Offline AI runtime (the drive's headline feature)
+    PROFILE_INCLUDE_AI_STACK=$(ask_yesno "Offline AI (Ollama)" \
+        "Pre-install the offline LLM runtime (Ollama + mikefarah yq)?\n\nThis is the drive's headline feature — local inference with no network. Adds ~2.5 GB. Models are NEVER baked; you pull them post-flash (ADR-005)." \
         "y")
-    PROFILE_INCLUDE_VSCODE="$ide_yn"
 
-    # 4. Agentic frameworks
-    local fw_choices
-    fw_choices=$(ask_checklist "Agentic frameworks" \
-        "Which agentic frameworks to install at build time?\n\nRecommended (v1.0-tested): aider (open), claude-code (EULA), codex-cli (EULA).\nNone = user installs post-flash via: kintsugi-frameworks install <name>" \
-        "aider"        "Aider — Apache-2.0, BYO-API-key"        "ON" \
-        "claude-code"  "Claude Code CLI — Anthropic EULA"         "OFF" \
-        "codex-cli"    "OpenAI Codex CLI — OpenAI EULA"           "OFF")
-    PROFILE_FRAMEWORKS="$fw_choices"
+    # 4. Agentic CLI platforms
+    PROFILE_INCLUDE_AGENTIC=$(ask_yesno "Agentic CLIs" \
+        "Pre-install the AIWG-supported agentic coding CLIs?\n\nBakes: claude-code, codex, opencode, copilot, openclaw (+ aider). Offline-available; you sign in with your own credentials post-flash.\n\n(VS Code/IDE is tracked separately — Gitea #43.)" \
+        "y")
 
-    # 5. Models (informational — never baked into ISO; user pulls post-flash)
+    # 5. Persistence size (#34)
+    PROFILE_PERSISTENCE_GIB=$(ask_input "Persistence size" \
+        "Ventoy persistence size in GiB (holds /data across reboots; #34)" \
+        "32")
+
+    # 6. Models (informational — never baked; user pulls post-flash)
     local want_pull_hint
     want_pull_hint=$(ask_yesno "Recommended models" \
-        "Model weights are NEVER baked into the ISO (per ADR-005 user-driven-loading). The wizard can print a post-flash pull suggestion.\n\nSuggest pulling recommended starter models (qwen3.5:4b, qwen3.5:9b) after first boot?" \
+        "Model weights are NEVER baked into the image (ADR-005 user-driven loading). Suggest pulling starter models (qwen3.5:4b, qwen3.5:9b) after first boot?" \
         "y")
     if [ "$want_pull_hint" = "true" ]; then
         PROFILE_MODELS_POST_FLASH="qwen3.5:4b qwen3.5:9b"
@@ -285,119 +288,126 @@ run_interactive() {
         PROFILE_MODELS_POST_FLASH=""
     fi
 
-    # 6. Signing (v1.0 default: no, per ADR-006 §D5)
-    local sign_yn
-    sign_yn=$(ask_yesno "Signing (v1.0: sha256 only)" \
-        "Full minisign signing is deferred to v1.1 per ADR-006 §D5. sha256 checksums are always produced alongside the ISO.\n\nEnable minisign anyway? (requires minisign installed + your keypair configured)" \
+    # 7. Signing (v1.0 default: no, per ADR-006 §D5)
+    PROFILE_SIGN_RELEASE=$(ask_yesno "Signing (v1.0: sha256 only)" \
+        "Full minisign signing is deferred to v1.1 (ADR-006 §D5). sha256 is always produced.\n\nEnable minisign anyway? (requires minisign + your keypair)" \
         "n")
-    PROFILE_SIGN_RELEASE="$sign_yn"
-
-    # Defaults for version pins (not wizard-configurable in v1.0)
-    PROFILE_OLLAMA_VERSION="latest"
-    PROFILE_YQ_VERSION="v4.44.3"
 }
 
 # ---------------------------------------------------------------------------
 # Confirmation + build
 # ---------------------------------------------------------------------------
 
+resolve_base_iso() {
+    [ -z "$PROFILE_BASE_ISO" ] && PROFILE_BASE_ISO="$(default_base_iso)"
+    [ -n "$PROFILE_BASE_ISO" ] || die "No base ISO specified (set KINTSUGI_BASE_ISO, place one under $BUILDS_ROOT/_base, or enter a path)."
+    [ -r "$PROFILE_BASE_ISO" ] || die "Base ISO not readable: $PROFILE_BASE_ISO"
+}
+
 show_summary() {
     head1 "Build plan"
+    local agentic_flag="" aistack_flag=""
+    [ "$PROFILE_INCLUDE_AGENTIC" = "true" ]  && agentic_flag="--with-agentic"
+    [ "$PROFILE_INCLUDE_AI_STACK" = "true" ] && aistack_flag="--with-ai-stack"
+    local build_dir="${BUILDS_ROOT}/${PROFILE_BUILD_NAME}"
     cat <<EOF
 Build name:        ${PROFILE_BUILD_NAME}
-Output dir:        ${BUILDS_ROOT}/${PROFILE_BUILD_NAME}/
-Include Ollama:    ${PROFILE_INCLUDE_OLLAMA}    (version: ${PROFILE_OLLAMA_VERSION})
-Include VS Code:   ${PROFILE_INCLUDE_VSCODE}    (Copilot extension + gh CLI)
-Frameworks:        ${PROFILE_FRAMEWORKS:-<none — user installs post-flash>}
+Output dir:        ${build_dir}/
+Base ISO:          ${PROFILE_BASE_ISO}
+Offline AI:        ${PROFILE_INCLUDE_AI_STACK}   (Ollama + yq)
+Agentic CLIs:      ${PROFILE_INCLUDE_AGENTIC}   (claude/codex/opencode/copilot/openclaw + aider)
+Persistence:       ${PROFILE_PERSISTENCE_GIB} GiB
 Post-flash models: ${PROFILE_MODELS_POST_FLASH:-<none suggested>}
-Signing:           ${PROFILE_SIGN_RELEASE}  (v1.0: sha256 always; minisign arrives in v1.1)
+Signing:           ${PROFILE_SIGN_RELEASE}  (v1.0: sha256 always; minisign in v1.1)
 
-Build command that will run:
-  ${BUILD_SCRIPT} ${BUILDS_ROOT}/${PROFILE_BUILD_NAME}
-
-Env vars that will be set:
-  KINTSUGI_FRAMEWORKS="${PROFILE_FRAMEWORKS}"
-  KINTSUGI_SKIP_IDE=$( [ "$PROFILE_INCLUDE_VSCODE" = "true" ] && echo "0" || echo "1" )
-  KINTSUGI_SKIP_OLLAMA=$( [ "$PROFILE_INCLUDE_OLLAMA" = "true" ] && echo "0" || echo "1" )
-  KINTSUGI_OLLAMA_VERSION="${PROFILE_OLLAMA_VERSION}"
-  KINTSUGI_YQ_VERSION="${PROFILE_YQ_VERSION}"
+Pipeline that will run:
+  1. sudo ${REMASTER_SCRIPT} \\
+       --base '${PROFILE_BASE_ISO}' --output '${build_dir}/${PROFILE_BUILD_NAME}.iso' \\
+       --scripts-dir '${USB_TOOLKIT}' --livefs-edit '${LIVEFS_EDIT}' ${agentic_flag} ${aistack_flag}
+  2. sudo ${VENTOY_SCRIPT} \\
+       --kintsugi-iso '${build_dir}/${PROFILE_BUILD_NAME}.iso' \\
+       --output '${build_dir}/${PROFILE_BUILD_NAME}-ventoy.img' \\
+       --persistence-size ${PROFILE_PERSISTENCE_GIB} --label KINTSUGI --ventoy-bin '${VENTOY_BIN}'
+  3. ${IMAGE_SCRIPT} '${build_dir}/${PROFILE_BUILD_NAME}-ventoy.img' \\
+       --output-dir '${build_dir}' --name '${PROFILE_BUILD_NAME}'
 EOF
 }
 
 run_build() {
+    resolve_base_iso
     local build_dir="${BUILDS_ROOT}/${PROFILE_BUILD_NAME}"
     mkdir -p "$build_dir"
     local log="${build_dir}/build.log"
     local profile_path="${build_dir}/build-profile.yaml"
+    local iso="${build_dir}/${PROFILE_BUILD_NAME}.iso"
+    local img="${build_dir}/${PROFILE_BUILD_NAME}-ventoy.img"
 
     write_profile "$profile_path"
 
+    local agentic_flag=() aistack_flag=()
+    [ "$PROFILE_INCLUDE_AGENTIC" = "true" ]  && agentic_flag=(--with-agentic)
+    [ "$PROFILE_INCLUDE_AI_STACK" = "true" ] && aistack_flag=(--with-ai-stack)
+
     if [ "$MODE_DRY_RUN" = "1" ]; then
         info ""
-        info "Dry run — not invoking the builder."
-        info "Rerun without --dry-run, or run the build command manually:"
+        info "Dry run — not invoking the pipeline. Commands that would run:"
         info ""
-        info "  KINTSUGI_FRAMEWORKS='${PROFILE_FRAMEWORKS}' \\"
-        info "  KINTSUGI_SKIP_IDE=$( [ "$PROFILE_INCLUDE_VSCODE" = "true" ] && echo "0" || echo "1" ) \\"
-        info "  KINTSUGI_SKIP_OLLAMA=$( [ "$PROFILE_INCLUDE_OLLAMA" = "true" ] && echo "0" || echo "1" ) \\"
-        info "  KINTSUGI_OLLAMA_VERSION='${PROFILE_OLLAMA_VERSION}' \\"
-        info "  KINTSUGI_YQ_VERSION='${PROFILE_YQ_VERSION}' \\"
-        info "  sudo ${BUILD_SCRIPT} '${build_dir}'"
+        info "  sudo ${REMASTER_SCRIPT} --base '${PROFILE_BASE_ISO}' --output '${iso}' \\"
+        info "       --scripts-dir '${USB_TOOLKIT}' --livefs-edit '${LIVEFS_EDIT}' ${agentic_flag[*]} ${aistack_flag[*]}"
+        info "  sudo ${VENTOY_SCRIPT} --kintsugi-iso '${iso}' --output '${img}' \\"
+        info "       --persistence-size ${PROFILE_PERSISTENCE_GIB} --label KINTSUGI --ventoy-bin '${VENTOY_BIN}'"
+        info "  ${IMAGE_SCRIPT} '${img}' --output-dir '${build_dir}' --name '${PROFILE_BUILD_NAME}'"
         return 0
     fi
 
-    head1 "Running build"
+    head1 "Running build pipeline"
     info "Logging to: $log"
-    info "This will take 15–30 minutes. You may need to enter sudo password."
+    info "This takes 20-30+ minutes (remaster + ~1.5 GB Ollama download + repack + compress)."
+    info "You may be prompted for your sudo password."
     echo ""
 
-    local skip_ide skip_ollama
-    [ "$PROFILE_INCLUDE_VSCODE" = "true" ] && skip_ide=0   || skip_ide=1
-    [ "$PROFILE_INCLUDE_OLLAMA" = "true" ] && skip_ollama=0 || skip_ollama=1
-    export KINTSUGI_FRAMEWORKS="$PROFILE_FRAMEWORKS"
-    export KINTSUGI_SKIP_IDE="$skip_ide"
-    export KINTSUGI_SKIP_OLLAMA="$skip_ollama"
-    export KINTSUGI_OLLAMA_VERSION="$PROFILE_OLLAMA_VERSION"
-    export KINTSUGI_YQ_VERSION="$PROFILE_YQ_VERSION"
+    {
+        head1 "[1/3] Remaster the stock ISO"
+        sudo "$REMASTER_SCRIPT" --base "$PROFILE_BASE_ISO" --output "$iso" \
+            --scripts-dir "$USB_TOOLKIT" --livefs-edit "$LIVEFS_EDIT" \
+            "${agentic_flag[@]}" "${aistack_flag[@]}"
 
-    if sudo -E "$BUILD_SCRIPT" "$build_dir" 2>&1 | tee "$log"; then
-        head1 "Build succeeded"
-        local iso
-        iso=$(find "$build_dir" -maxdepth 1 -name "*.iso" -o -name "*.hybrid.iso" 2>/dev/null | head -1)
-        if [ -n "$iso" ]; then
-            local sha
-            sha=$(sha256sum "$iso" | awk '{print $1}')
-            cat <<EOF
+        head1 "[2/3] Assemble the Ventoy image"
+        sudo "$VENTOY_SCRIPT" --kintsugi-iso "$iso" --output "$img" \
+            --persistence-size "$PROFILE_PERSISTENCE_GIB" --label KINTSUGI --ventoy-bin "$VENTOY_BIN"
 
-ISO:       $iso
-Size:      $(du -h "$iso" | cut -f1)
-sha256:    $sha
+        head1 "[3/3] Package the distributable image"
+        "$IMAGE_SCRIPT" "$img" --output-dir "$build_dir" --name "$PROFILE_BUILD_NAME"
+    } 2>&1 | tee "$log"
 
-Save the sha256:
-  echo '${sha}  $(basename "$iso")' > '${iso}.sha256'
+    # Pipe status (not the tee'd exit) — fail if any stage failed.
+    local rc=${PIPESTATUS[0]}
+    if [ "$rc" -ne 0 ]; then
+        err "Build pipeline FAILED (exit $rc). See $log."
+        return "$rc"
+    fi
 
-Flash it to a USB (DESTRUCTIVE — pick the right device!):
-  sudo dd if='${iso}' of=/dev/sdX bs=4M status=progress conv=fsync
+    head1 "Build succeeded"
+    local zst sha
+    zst=$(find "$build_dir" -maxdepth 1 -name "${PROFILE_BUILD_NAME}.img.zst" | head -1)
+    if [ -n "$zst" ] && [ -f "${zst%.zst}.zst" ]; then
+        sha=$(find "$build_dir" -maxdepth 1 -name "*.sha256" | head -1)
+        cat <<EOF
 
-Assemble a full Ventoy multi-boot image, then package it for distribution:
-  # 1. Build the Ventoy .img (bootloader + 32 GiB persistence + this ISO + rescue ISOs):
-  sudo scripts/usb-toolkit/make-ventoy-image.sh --kintsugi-iso '${iso}' [--rescue-iso <iso> ...]
-  # 2. Compress to a distributable .img.zst + .sha256:
-  scripts/create-image.sh dist/kintsugi-ventoy.img
-  # (in-wizard rescue-ISO selection + single-command chaining: Gitea #35 / #36)
+Distributable:  $zst
+Checksum:       ${sha:-<none>}
+Size:           $(du -h "$zst" | cut -f1)
+
+Flash it to a USB (DESTRUCTIVE — pick the right device; verify by serial!):
+  zstd -dc '$zst' | sudo dd of=/dev/sdX bs=4M status=progress oflag=direct conv=fsync
 
 Post-flash, pull models:
 EOF
-            for m in $PROFILE_MODELS_POST_FLASH; do
-                info "  kintsugi-models pull $m"
-            done
-        else
-            warn "Build reported success but no ISO was found in $build_dir"
-        fi
+        for m in $PROFILE_MODELS_POST_FLASH; do info "  kintsugi-models pull $m"; done
+        info ""
+        info "Rescue ISOs (#35) are not yet bundled by default; add with make-ventoy-image.sh --rescue-iso/--rescue-dir."
     else
-        local rc=$?
-        err "Build FAILED (exit $rc). See $log for details."
-        return "$rc"
+        warn "Pipeline reported success but ${PROFILE_BUILD_NAME}.img.zst not found in $build_dir"
     fi
 }
 
@@ -406,17 +416,14 @@ EOF
 # ---------------------------------------------------------------------------
 
 cmd_help() {
-    sed -n '2,19p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'
+    sed -n '2,38p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'
     cat <<EOF
 
 Flags:
   --from-profile <file>    Replay a saved profile (interactive confirm)
   --non-interactive <file> Replay with no confirmation
-  --dry-run                Show the plan + would-run command; do not build
+  --dry-run                Show the plan + pipeline; do not build
   --help                   This help
-
-Environment:
-  KINTSUGI_BUILDS_ROOT     Where to create build dirs (default: \$HOME/kintsugi-builds)
 
 Version: ${VERSION}
 EOF
