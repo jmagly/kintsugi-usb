@@ -31,6 +31,10 @@
 #   --size <GiB>             Total image size. Default: auto (sum of ISOs +
 #                            persistence + 1 GiB slack), minimum 8.
 #   --persistence-size <GiB> Persistence .dat size (default: 32; per #34).
+#   --label <NAME>           exFAT data-partition label shown to the recipient
+#                            (default: KINTSUGI; relabeled post-install).
+#   --readme <path>          On-drive README copied to the data-partition root
+#                            (default: config/drive-readme.txt).
 #   --ventoy-bin <path>      Path to Ventoy2Disk.sh (default: search PATH /
 #                            VENTOY_DIR). Required for the real build.
 #   --dry-run                Validate inputs, compute the layout, print the
@@ -62,6 +66,8 @@ OUTPUT="./dist/kintsugi-ventoy.img"
 SIZE_GIB=0            # 0 = auto
 PERSIST_GIB=32        # #34 default
 VENTOY_BIN="${VENTOY_BIN:-}"
+DATA_LABEL="KINTSUGI"   # end-user-facing exFAT data-partition label (friendly names)
+README_SRC=""           # on-drive README template (auto-resolved from repo config/ if empty)
 DRY_RUN=0
 
 # --- arg parsing -----------------------------------------------------------
@@ -71,6 +77,8 @@ while [ $# -gt 0 ]; do
         --rescue-iso)       RESCUE_ISOS+=("$2"); shift 2 ;;
         --rescue-dir)       RESCUE_DIR=$2; shift 2 ;;
         --output)           OUTPUT=$2; shift 2 ;;
+        --label)            DATA_LABEL=$2; shift 2 ;;
+        --readme)           README_SRC=$2; shift 2 ;;
         --size)             SIZE_GIB=$2; shift 2 ;;
         --persistence-size) PERSIST_GIB=$2; shift 2 ;;
         --ventoy-bin)       VENTOY_BIN=$2; shift 2 ;;
@@ -116,6 +124,12 @@ fi
 
 kintsugi_iso_name="$(basename "$KINTSUGI_ISO")"
 
+# Resolve the on-drive README template (repo config/drive-readme.txt by default).
+if [ -z "$README_SRC" ]; then
+    _self_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    README_SRC="${_self_dir}/../../config/drive-readme.txt"
+fi
+
 # --- plan output -----------------------------------------------------------
 head1 "make-ventoy-image v${VERSION}"
 info "  Kintsugi ISO:       $KINTSUGI_ISO ($(du -h "$KINTSUGI_ISO" | cut -f1))"
@@ -125,6 +139,8 @@ info "  Output image:       $OUTPUT"
 info "  Total size:         ${SIZE_GIB} GiB  (ISOs ~${iso_gib} GiB + persistence ${PERSIST_GIB} GiB + slack)"
 info "  Persistence .dat:   ${PERSIST_GIB} GiB, bound to: $kintsugi_iso_name  (issue #34)"
 info "  Persistence plugin: ventoy/ventoy.json -> { \"persistence\": [ { \"image\": \"/$kintsugi_iso_name\", \"backend\": \"/ventoy/persistence/kintsugi.dat\" } ] }"
+info "  Data label:         $DATA_LABEL  (exFAT; what the recipient sees)"
+info "  On-drive README:    README.txt at the data-partition root  (from: $README_SRC)"
 
 if [ "$DRY_RUN" = "1" ]; then
     info ""
@@ -179,6 +195,14 @@ head1 "Installing Ventoy to $LOOPDEV"
 "$VENTOY_BIN" -I -g "$LOOPDEV" || die "Ventoy install failed" 2
 partprobe "$LOOPDEV" 2>/dev/null || true
 
+head1 "Labeling data partition: $DATA_LABEL"
+# Friendly, end-user-facing label — the default 'Ventoy' confuses recipients.
+if command -v exfatlabel &>/dev/null; then
+    exfatlabel "${LOOPDEV}p1" "$DATA_LABEL" || warn "exfatlabel failed; keeping the default 'Ventoy' label"
+else
+    warn "exfatlabel not found (install exfatprogs); keeping the default 'Ventoy' label"
+fi
+
 head1 "Mounting Ventoy data partition"
 MNT="$(mktemp -d)"
 # Ventoy's first partition (exFAT) holds the ISOs + ventoy/ plugin dir.
@@ -190,6 +214,13 @@ for iso in "${RESCUE_ISOS[@]:-}"; do
     [ -z "$iso" ] && continue
     cp -v "$iso" "$MNT/" || die "copy of $(basename "$iso") failed" 2
 done
+
+head1 "Writing on-drive README (end-user guidance)"
+if [ -r "$README_SRC" ]; then
+    cp "$README_SRC" "$MNT/README.txt" && info "  README.txt -> data-partition root"
+else
+    warn "README template not found at $README_SRC; skipping on-drive README"
+fi
 
 head1 "Creating persistence .dat (${PERSIST_GIB} GiB) — issue #34"
 mkdir -p "$MNT/ventoy/persistence"

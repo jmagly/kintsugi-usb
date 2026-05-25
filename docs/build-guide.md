@@ -102,6 +102,15 @@ sudo cp scripts/*.sh /mnt/ventoy/data/scripts/
 # sudo cp -r /path/to/your/fleet-docs/ /mnt/ventoy/data/docs/fleet/
 ```
 
+> **End-user labels + README (recommended).** So recipients aren't confused by the default `Ventoy` label, give the data partition a friendly label and drop a plain-text README at its root — exactly what `make-ventoy-image.sh` does automatically:
+>
+> ```bash
+> sudo umount /mnt/ventoy
+> sudo exfatlabel /dev/sdX1 KINTSUGI          # friendly label (partition must be unmounted)
+> sudo mount /dev/sdX1 /mnt/ventoy
+> sudo cp config/drive-readme.txt /mnt/ventoy/README.txt
+> ```
+
 ## Step 9: Sync and Unmount
 
 ```bash
