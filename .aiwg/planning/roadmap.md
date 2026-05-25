@@ -17,7 +17,7 @@ The 2026-05-24 build/imaging audit (`audit-2026-05-24`, Gitea #34–#42) is the 
 - **Shipped (iteration-1 code)**: build wizard (`scripts/kintsugi-build`), imaging pipeline (`prep-master`, `create-image`, `flash-image`, `verify-image`, `publish-release`), `kintsugi-models` + `kintsugi-frameworks` CLIs, custom live-build ISO (VS Code/Copilot/gh + Ollama), MIT LICENSE + THIRD-PARTY-LICENSES, SECURITY.md, CHANGELOG.md, user docs.
 - **Landed since (audit response, `main` @ `1cb5af0`)**: `make-ventoy-image.sh` (Ventoy assembler, #42 — offline-verified), persistence provisioning code (#34), wizard end-stage wiring + stale-comment removal (#36), and the residual Cubic→live-build doc corrections (#39 completeness).
 - **Not done (the real release blockers)**: rescue catalog (#35), wizard unattended auto-chain (#36), the hardware acceptance round-trip (#37), and the tag/release (#41). The build does **not** yet pass its DoD.
-- **Open issues (7)**: #34, #35, #36, #37, #42 (Ventoy build), #41 (release, gated), #19 (v1.1 signing). Everything else (#1–#33, #38, #39, #40) is closed.
+- **Open issues (8)**: #34, #35, #36, #37, #42 (Ventoy build), #43 (**new** — remaster omits the offline-AI stack/IDE; ADR-008 content port incomplete), #41 (release, gated), #19 (v1.1 signing). Everything else (#1–#33, #38, #39, #40) is closed.
 - **Risk posture**: R-05 (imaging pipeline) is the live risk — the audit showed it is not yet retired; it retires when #37 passes. R-07 (secrets) MITIGATING (scanner #32 landed). See `risks/risk-list.md`.
 
 **Resolved decisions (2026-05-24):**
@@ -38,7 +38,8 @@ The release is blocked behind the Ventoy build. This lane closes that gap. Most 
 | 1 | **Ventoy `.img` assembler** — bootloader + persistence + rescue/Kintsugi ISOs into the layout. | #42 | **code landed** (`--dry-run`/validation offline-verified); hardware build → #37 |
 | 2 | **Persistence provisioning** — 32 GiB `.dat`, plugin binding, `/data` on the overlay. | #34 | **code landed**; mount/boot validation → #37 |
 | 3 | **Rescue catalog** — `kintsugi-rescue` CLI + `manifest/rescue-isos-recommended.yaml` + wizard rescue-selection step + doc updates. Needs **network** to fetch+hash real ISOs; carries the forensics-distro survey. | #35 | remaining |
-| 4 | **Wizard unattended auto-chain** — `kintsugi-build` runs build → assemble → package without manual steps (needs #35's selection step + #42). | #36 | wiring scaffold landed; auto-chain remaining |
+| 4 | **Remaster content parity** — port the offline-AI stack (Ollama, llama.cpp/llama-server), mikefarah `yq`, and (decision) VS Code/Copilot/gh into `make-remaster-iso.sh`. The ADR-008 pivot ported rescue tools + scripts + agentic CLIs but **not** the drive's headline offline-LLM feature. Code-only (mirrors `agentic-provision.sh` chroot-exec); blocks the wizard's runtime/IDE options. | #43 | **new (2026-05-25)** — discovered during pass-2/3 build |
+| 5 | **Wizard unattended auto-chain + ADR-008 rewire** — repoint `kintsugi-build` off the dead live-build builder onto `make-remaster-iso.sh --base … --with-agentic → make-ventoy-image.sh → prep-master.sh → create-image.sh`; swap prereqs (livefs-edit/ventoy/squashfs vs live-build); reconcile the option model to remaster flags. Gated on #43 for the runtime/IDE options to mean anything. | #36 | wiring scaffold landed; rewire + auto-chain remaining |
 
 **Exit criteria:** a fresh clone → `./scripts/kintsugi-build` (defaults) produces a Ventoy `.img.zst` + `.sha256` + profile, with rescue ISOs in the menu and persistence wired — i.e. the artifact #37 will flash.
 
