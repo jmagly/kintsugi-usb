@@ -188,7 +188,7 @@ Amended 2026-04-21 per ADR-005 + ADR-006. See `.aiwg/architecture/adr-005-toolki
 | NFR-6.1 | Add new ISO | Copy file to USB, appears in menu |
 | NFR-6.2 | Update model | Replace .gguf file on USB |
 | NFR-6.3 | Update AI tools | Replace binary on USB |
-| NFR-6.4 | Rebuild custom ISO | Documented live-build procedure |
+| NFR-6.4 | Rebuild custom ISO | Documented remaster procedure (ADR-008) |
 
 ---
 

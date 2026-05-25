@@ -44,17 +44,19 @@ Nothing sensitive should live in shell history on a shipped image. Wipe:
 - `/root/.bash_history` etc. for the root user
 - `~/.cache/` directories for any auth-bearing tool (selectively — see Rule 7 for what to keep)
 
-## Rule 4: Persistence overlay content (live-build)
+## Rule 4: Persistence overlay content
 
-`build-custom-iso.sh` does not create a persistence overlay; Ventoy does when a user plugs in the USB. But any on-master persistence scratch must be wiped:
+> **Scope (ADR-008):** `prep-master.sh` and these rules apply to the legacy/manual mastered-USB path. The remaster builder (`make-remaster-iso.sh`) builds from a clean stock ISO and is **not** in the wizard's auto-chain, so it accumulates no persistence scratch by construction. Run these checks only when sanitizing a manually-mastered USB or a mounted master partition.
+
+Neither builder creates a persistence overlay; Ventoy does when a user plugs in the USB. But any on-master persistence scratch must be wiped:
 
 - `/var/lib/kintsugi/persistence-test-*`
 - `/data/` (if populated at build time by accident)
-- `/home/live/.local/share/` (live-build user's XDG data)
+- `/home/<live-user>/.local/share/` (the live session user's XDG data; casper's user on the remaster path)
 
 ## Rule 5: Installer caches
 
-- `/var/cache/apt/archives/*.deb` → `apt-get clean` inside chroot (already in `build-custom-iso.sh`'s end-of-chroot script; verified by prep-master)
+- `/var/cache/apt/archives/*.deb` → `apt-get clean` inside chroot (the remaster provisioners `apt-get clean` at end-of-run; verified by prep-master on the manual path)
 - `/var/lib/apt/lists/*` → optional (saves ~300 MB but recipients may want offline apt capability; default: KEEP)
 - `/root/.cache/pip/*` → wipe
 - `/tmp/*`, `/var/tmp/*` → wipe

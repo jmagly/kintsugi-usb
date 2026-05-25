@@ -10,7 +10,8 @@ On the build host (dedicated VM or clean Ubuntu 24.04; **not** your daily-driver
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y live-build whiptail zstd git curl ca-certificates
+sudo apt-get install -y whiptail squashfs-tools xorriso zstd git curl ca-certificates
+# Plus the ADR-008 remaster toolchain: livefs-edit + a Ventoy release (Ventoy2Disk.sh) — see docs/build-guide.md.
 # mikefarah/yq (the Ubuntu apt 'yq' is a different tool)
 sudo wget -O /usr/local/bin/yq \
   https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
@@ -26,7 +27,7 @@ ls /mnt/warehouse/releases/kintsugi-usb/ || sudo mkdir -p /mnt/warehouse/release
 Confirm environment once before every release:
 
 ```bash
-live-build --version
+livefs-edit --help >/dev/null && echo "livefs-edit OK"   # ADR-008 remaster tool
 yq --version                      # must say 'mikefarah'
 test -w /mnt/warehouse/releases/kintsugi-usb/ && echo NFS writable
 df -BG /home | tail -1            # need ≥20 GB free
