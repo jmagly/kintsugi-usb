@@ -193,11 +193,13 @@ done
 
 head1 "Creating persistence .dat (${PERSIST_GIB} GiB) — issue #34"
 mkdir -p "$MNT/ventoy/persistence"
-# Ventoy ships CreatePersistentImg.sh; fall back to a raw ext4 .dat if absent.
+# Ventoy ships CreatePersistentImg.sh at its top level; fall back to a raw ext4 .dat if absent.
+# Signature (Ventoy 1.1.x): -s size(MB) -t fstype -l LABEL -c configname -o outputfile.
 PERSIST_DAT="$MNT/ventoy/persistence/kintsugi.dat"
-if [ -x "$(dirname "$VENTOY_BIN")/tool/CreatePersistentImg.sh" ]; then
-    "$(dirname "$VENTOY_BIN")/tool/CreatePersistentImg.sh" \
-        -s "$(( PERSIST_GIB * 1024 ))" -t ext4 -l casper-rw -c "$PERSIST_DAT" \
+VENTOY_PERSIST="$(dirname "$VENTOY_BIN")/CreatePersistentImg.sh"
+if [ -x "$VENTOY_PERSIST" ]; then
+    "$VENTOY_PERSIST" \
+        -s "$(( PERSIST_GIB * 1024 ))" -t ext4 -l casper-rw -c persistence.conf -o "$PERSIST_DAT" \
         || die "persistence image creation failed" 2
 else
     warn "CreatePersistentImg.sh not found; creating a raw ext4 .dat directly."
