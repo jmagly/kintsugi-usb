@@ -44,6 +44,7 @@ OUTPUT="./dist/kintsugi-v2026.5.0.iso"
 SCRIPTS_DIR="$SELF_DIR"
 LIVEFS_EDIT="${LIVEFS_EDIT:-$HOME/kintsugi-builds/_tools/livefs-venv/bin/livefs-edit}"
 DRY_RUN=0
+WITH_AGENTIC=0          # --with-agentic: also pre-install the agentic CLI platforms
 # Curated, apt-installable rescue set (proven installable on noble during the
 # live-build investigation). The full catalog stays manifest-driven elsewhere.
 PACKAGES="e2fsprogs xfsprogs btrfs-progs dosfstools ntfs-3g exfatprogs parted gdisk \
@@ -62,7 +63,8 @@ while [ $# -gt 0 ]; do
         --scripts-dir) SCRIPTS_DIR=$2; shift 2 ;;
         --packages)    PACKAGES=$2; shift 2 ;;
         --livefs-edit) LIVEFS_EDIT=$2; shift 2 ;;
-        --dry-run)     DRY_RUN=1; shift ;;
+        --dry-run)      DRY_RUN=1; shift ;;
+        --with-agentic) WITH_AGENTIC=1; shift ;;
         -h|--help)     sed -n '2,40p' "$0" | sed 's/^# \?//'; exit 0 ;;
         -*)            die "Unknown flag: $1" ;;
         *)             die "Unexpected argument: $1" ;;
@@ -87,12 +89,23 @@ for s in $RUNTIME_SCRIPTS; do
     fi
 done
 
+# Optionally pre-install the agentic CLI platforms inside the squashfs chroot.
+if [ "$WITH_AGENTIC" = "1" ]; then
+    AGENTIC_SRC="$SCRIPTS_DIR/agentic-provision.sh"
+    [ -r "$AGENTIC_SRC" ] || die "agentic provisioner not found: $AGENTIC_SRC"
+    ACTIONS+=( --cp "$AGENTIC_SRC" "\$LAYERS[0]/tmp/agentic-provision.sh" )
+    # livefs-edit --python: mount the base squashfs, then chroot-run the provisioner
+    # (claude-code, codex, opencode, copilot, aider). Mirrors install_packages' chroot-exec.
+    ACTIONS+=( --python "base = ctxt.edit_squashfs(get_squash_names(ctxt)[0]); ctxt.run(['chroot', base, 'bash', '/tmp/agentic-provision.sh'])" )
+fi
+
 head1 "make-remaster-iso v${VERSION}"
 info "  Base ISO:     $BASE ($(du -h "$BASE" | cut -f1))"
 info "  Output:       $OUTPUT"
 info "  livefs-edit:  $LIVEFS_EDIT"
 info "  Packages:     $(echo "$PACKAGES" | wc -w) rescue packages"
 info "  Scripts:      $RUNTIME_SCRIPTS"
+if [ "$WITH_AGENTIC" = "1" ]; then info "  Agentic:      claude-code, codex, opencode, copilot, aider (pre-installed in-chroot)"; fi
 info ""
 info "  livefs-edit \"$BASE\" \"$OUTPUT\" \\"
 printf '    %s\n' "${ACTIONS[@]}"
