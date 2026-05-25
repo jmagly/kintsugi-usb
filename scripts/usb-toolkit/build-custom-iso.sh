@@ -29,8 +29,8 @@ lb config \
     --distribution noble \
     --archive-areas "main restricted universe multiverse" \
     --architectures amd64 \
-    --binary-images iso-hybrid \
-    --bootloader grub-efi \
+    --binary-images iso \
+    --bootloader syslinux \
     --debian-installer false \
     --memtest none \
     --iso-application "${ISO_NAME}" \
@@ -53,6 +53,12 @@ live-tools
 live-config
 live-config-systemd
 squashfs-tools
+
+# BIOS bootloader files (isolinux) — required by --bootloader syslinux to embed
+# an El Torito boot record. (This live-build has no grub-efi stage; native UEFI
+# is a tracked follow-up. Ventoy chainloads this ISO and provides UEFI boot.)
+isolinux
+syslinux-common
 EOF
 
 # Core rescue tools
