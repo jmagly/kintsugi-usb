@@ -23,7 +23,11 @@ scripts/
 ├── hooks/
 │   └── pre-commit              # commit-time secret scan (R-07, #32)
 └── usb-toolkit/
-    ├── build-custom-iso.sh     # custom Ubuntu live ISO via live-build (ADR-007)
+    ├── make-remaster-iso.sh    # ⭐ remaster the stock Ubuntu ISO → Kintsugi live ISO (ADR-008)
+    ├── agentic-provision.sh    # in-chroot (--with-agentic): claude/codex/opencode/copilot/openclaw + aider
+    ├── ai-stack-provision.sh   # in-chroot (--with-ai-stack): offline AI core — Ollama + mikefarah yq (#43)
+    ├── kintsugi-install-hermes # opt-in post-boot Hermes installer (per-user; needs network)
+    ├── build-custom-iso.sh     # superseded live-build builder (ADR-007 → ADR-008); kept as provenance
     ├── make-ventoy-image.sh    # assemble the Ventoy .img (bootloader + persistence + ISOs) (#42)
     ├── kintsugi-models         # user-driven model management CLI (ADR-005 §D3)
     ├── kintsugi-frameworks     # agentic-framework toolkit CLI (ADR-006 §D2)
@@ -44,19 +48,20 @@ If you are cloning this repo to build your own Kintsugi USB, the supported path 
 ./scripts/kintsugi-build --from-profile p.yaml  # replay a saved profile
 
 # Output: a flashable Ventoy <build>.img.zst + .sha256 (32 GiB persistence by default).
-# Models are user-driven: pulled post-flash with `kintsugi-models pull` (ADR-005),
-# or optionally pre-bundled at build time via `kintsugi-models pull <slug> --target …/payload/models/`.
+# Models are user-driven: pulled post-flash with `kintsugi-models pull` (ADR-005).
+# Weights are NEVER baked into the image (ADR-005 user-driven loading).
 ```
 
-> **Build status (2026-05-24):** the wizard builds the custom live ISO today; the Ventoy `.img` assembly (`make-ventoy-image.sh`, #42) and 32 GiB persistence (#34) are committed, and wiring them into a single unattended wizard run is in progress ([#36](https://git.integrolabs.net/roctinam/kintsugi-usb/issues/36)). Until that lands, run the assembly + package steps explicitly:
+> **Build status (2026-05-25):** the wizard now **auto-chains the full pipeline** end-to-end ([#36](https://git.integrolabs.net/roctinam/kintsugi-usb/issues/36) code landed): `make-remaster-iso.sh` (ADR-008) → `make-ventoy-image.sh` (Ventoy + 32 GiB persistence, #42/#34) → `create-image.sh` (`.img.zst`). The end-to-end run on hardware is the [#37](https://git.integrolabs.net/roctinam/kintsugi-usb/issues/37) acceptance gate. To run the stages explicitly (e.g. to add rescue ISOs):
 
 ```bash
-# Advanced / until #36 auto-chains the wizard:
-sudo ./scripts/usb-toolkit/build-custom-iso.sh <build-dir>          # 1. custom live ISO (live-build)
+# Explicit stages (what the wizard auto-chains):
+sudo ./scripts/usb-toolkit/make-remaster-iso.sh \
+     --base <stock-ubuntu.iso> --output <build-dir>/kintsugi.iso \
+     --scripts-dir scripts/usb-toolkit --with-agentic --with-ai-stack   # 1. remaster (ADR-008)
 sudo ./scripts/usb-toolkit/make-ventoy-image.sh \
-     --kintsugi-iso <build-dir>/*.iso [--rescue-iso <iso> …]        # 2. assemble Ventoy .img + persistence
-sudo ./scripts/prep-master.sh <build-dir>                           # 3. sanitize
-./scripts/create-image.sh dist/kintsugi-ventoy.img                  # 4. package → .img.zst + .sha256
+     --kintsugi-iso <build-dir>/kintsugi.iso [--rescue-iso <iso> …]      # 2. assemble Ventoy .img + persistence
+./scripts/create-image.sh <build-dir>/kintsugi-ventoy.img               # 3. package → .img.zst + .sha256
 ```
 
 For the **fully manual** Ventoy assembly (install Ventoy by hand, lay out the data partition, create the persistence image) — the under-the-hood procedure that `make-ventoy-image.sh` automates — see `../docs/build-guide.md`.

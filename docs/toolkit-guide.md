@@ -40,8 +40,10 @@ Install build dependencies:
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y live-build whiptail zstd git curl ca-certificates
+sudo apt-get install -y whiptail squashfs-tools xorriso zstd git curl ca-certificates
 ```
+
+Plus the ADR-008 remaster toolchain: `livefs-edit` and a Ventoy release (`Ventoy2Disk.sh`) — see `../docs/build-guide.md` and [ADR-008](../.aiwg/architecture/adr-008-build-tooling-remaster-stock-iso.md). `live-build` is **no longer used**; the build remasters the stock Ubuntu ISO instead.
 
 Install the `mikefarah/yq` YAML processor (the wizard uses it to read/write profiles and manifests):
 
@@ -514,9 +516,9 @@ You have Ubuntu's Python-based `yq`, not mikefarah's Go binary. Re-install per �
 
 It falls back to plain prompts, which work fine but are uglier. `sudo apt-get install -y whiptail` to fix.
 
-### live-build fails mid-chroot
+### Remaster fails mid-build
 
-Typical causes: network blip to an apt mirror, full `/tmp`, a package that changed name upstream. Read `~/kintsugi-builds/<build>/build.log` — live-build errors are verbose and usually name the failing package. Fix, then rerun from the profile.
+Typical causes: network blip to an apt/npm mirror, full `/tmp`, an upstream installer that changed (e.g. an Ollama installer sha-pin mismatch), or a missing host tool (`livefs-edit`, `squashfs-tools`, `xorriso`, `zstd`). Read `~/kintsugi-builds/<build>/build.log`. In-chroot install detail for the agentic CLIs / AI stack is captured inside the image at `/etc/kintsugi/{agentic,ai-stack}-install.log` (extract with `unsquashfs` if a stage reported a failure). Fix, then rerun from the profile.
 
 ### sha256 mismatch on a pulled model
 
