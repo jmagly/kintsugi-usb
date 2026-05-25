@@ -29,7 +29,10 @@
 set -u
 export DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8
 
-OLLAMA_VERSION="${KINTSUGI_OLLAMA_VERSION:-latest}"
+# Empty = the installer's built-in latest. Do NOT default to the literal "latest":
+# install.sh builds VER_PARAM="?version=$OLLAMA_VERSION", and ".../ollama-linux-amd64.tar.zst?version=latest"
+# 404s (only the bare URL serves latest). A real pinned version (e.g. "0.5.7") is fine.
+OLLAMA_VERSION="${KINTSUGI_OLLAMA_VERSION:-}"
 OLLAMA_INSTALLER_SHA256="${KINTSUGI_OLLAMA_INSTALLER_SHA256:-25f64b810b947145095956533e1bdf56eacea2673c55a7e586be4515fc882c9f}"
 YQ_VERSION="${KINTSUGI_YQ_VERSION:-v4.44.3}"
 
@@ -61,7 +64,7 @@ else
 fi
 
 # --- Ollama (offline LLM runtime, ADR-005 §D2; installer sha256-pinned, #40) ---
-log "installing Ollama (version=${OLLAMA_VERSION}) ..."
+log "installing Ollama (version=${OLLAMA_VERSION:-latest/unpinned}) ..."
 INSTALL_SH=$(mktemp --suffix=.sh)
 if curl -fsSL --max-time 60 https://ollama.com/install.sh -o "$INSTALL_SH" 2>>"$LOG"; then
     GOT_SHA=$(sha256sum "$INSTALL_SH" | awk '{print $1}')
