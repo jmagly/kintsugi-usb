@@ -30,7 +30,7 @@ lb config \
     --archive-areas "main restricted universe multiverse" \
     --architectures amd64 \
     --binary-images iso-hybrid \
-    --bootloader grub \
+    --bootloader grub-efi \
     --debian-installer false \
     --memtest none \
     --iso-application "${ISO_NAME}" \
