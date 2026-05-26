@@ -126,11 +126,11 @@ This is the most important section of this guide for supply-chain safety. Read i
 
 This matters because Ollama registry pulls and HuggingFace downloads can, in principle, be tampered with or compromised upstream. R-17 in the risk register ([`.aiwg/risks/risk-list.md`](../.aiwg/risks/risk-list.md)) tracks this class of threat: a user pulling a malicious slug that appears legitimate but contains a poisoned quantization or a model trained to exfiltrate secrets.
 
-The `kintsugi-models` CLI implements four R-17 mitigations. Every builder should understand them; non-technical recipients should have the `--only-recommended` flag set on their behalf.
+The `kintsugi-models` CLI implements **two** R-17 mitigations today — the `--yes` gate (Mitigation 2) and `verify` (Mitigation 4). Two more — an interactive pull acknowledgment and the `--only-recommended` lockdown — are **planned, not yet implemented**; they are described below as the intended design so builders know the roadmap.
 
 #### Mitigation 1: Source URL + digest printed before download
 
-Every `kintsugi-models pull <slug>` invocation prints the resolved source URL and (where available) the digest **before** the download starts, and requires the user to acknowledge:
+Every `kintsugi-models pull <slug>` prints the resolved source URL and (where available) the digest **before** the download starts, so you can eyeball what's about to be fetched:
 
 ```text
 $ kintsugi-models pull qwen3.5:4b
@@ -140,10 +140,9 @@ Resolving slug: qwen3.5:4b
   URL:      registry.ollama.ai/library/qwen3.5:4b
   Digest:   sha256:ab34...ef90 (from Ollama manifest)
   Size:     ~2.5 GB download, ~3.0 GB resident
-Continue? [y/N]
 ```
 
-For HuggingFace-sourced entries, the URL is `huggingface.co/<hf_repo>/resolve/main/<hf_file>` and the sha256 from the manifest is printed; if the manifest's sha256 field is `null` (not yet populated), the CLI warns loudly.
+For HuggingFace-sourced entries, the URL is `huggingface.co/<hf_repo>/resolve/main/<hf_file>` and the sha256 from the manifest is printed; if the manifest's sha256 field is `null` (not yet populated), the CLI warns loudly. *(Planned: an interactive `Continue? [y/N]` acknowledgment before recommended-slug pulls — today, recommended slugs download immediately; only non-recommended slugs are gated, see Mitigation 2.)*
 
 #### Mitigation 2: Non-recommended slugs require `--yes`
 
@@ -158,9 +157,9 @@ kintsugi-models pull some-random-model:latest
 
 This is the speed bump. You can always override, but the CLI will not silently fetch content the maintainer never tested.
 
-#### Mitigation 3: `--only-recommended` lockdown flag
+#### Mitigation 3 (planned): `--only-recommended` lockdown flag
 
-If you are building for a non-technical recipient, set `--only-recommended` at the CLI level (writing `KINTSUGI_ONLY_RECOMMENDED=1` to `/etc/kintsugi/kintsugi.conf` on the master). With the flag set, `kintsugi-models pull` hard-refuses any non-recommended slug regardless of `--yes`. The only way to pull off-manifest content is to boot the USB, edit the config, and rerun — an intentional friction point that blocks casual social-engineering.
+> **Not yet implemented.** `kintsugi-models` has no `--only-recommended` flag or `KINTSUGI_ONLY_RECOMMENDED` config today. The intended design: for a non-technical recipient, setting `--only-recommended` (via `KINTSUGI_ONLY_RECOMMENDED=1` in `/etc/kintsugi/kintsugi.conf`) would make `kintsugi-models pull` hard-refuse any non-recommended slug regardless of `--yes` — a friction point against casual social-engineering. Until it lands, Mitigation 2's `--yes` gate is the speed bump.
 
 #### Mitigation 4: `kintsugi-models verify`
 
@@ -206,7 +205,7 @@ Any of those on a shipped image would leak credentials to every recipient. The u
 
 ### 5.3 Adding a framework to your build
 
-During the wizard (§6) you will see a checkbox for each `v1.0_ship_decision: true` framework. Tick what you want. After build, you can also install more at runtime:
+The wizard (§6) bakes the agentic CLI set with a **single yes/no** (`--with-agentic`): claude-code, codex, opencode, copilot, openclaw, omnius, and aider. There is no per-framework checkbox — selection of *additional* frameworks happens post-flash at runtime:
 
 ```bash
 # On the flashed USB, post-first-boot:
@@ -227,23 +226,26 @@ With prerequisites installed and your model/framework choices in mind:
 ./scripts/kintsugi-build
 ```
 
-That is the whole happy path. The wizard (`scripts/kintsugi-build`, ADR-006 §D1) orchestrates everything. Walk-through of the prompts:
+That is the whole happy path. The wizard (`scripts/kintsugi-build`, ADR-006 §D1 / ADR-008 build) orchestrates the full pipeline — remaster → Ventoy assembly → package — with no manual steps. Walk-through of the prompts (full per-screen detail in [`wizard-guide.md`](wizard-guide.md) §3):
 
-1. **Build name** — default `kintsugi-v2026.5.0-YYYYMMDD`. This is the output directory name and ISO filename prefix. Pick something distinctive if you are building multiple variants.
-2. **AI runtimes** (checkbox) — `llama_cpp` (always installed; informational) and `ollama` (default on). Untick Ollama only if you want a llama.cpp-only build.
-3. **VS Code + Copilot** (yes/no, default yes) — installs VS Code from the Microsoft apt repo during the chroot step, preinstalls the GitHub Copilot extension, installs `gh` CLI. Telemetry is disabled by default via `/etc/skel/.config/Code/User/settings.json` (R-19 mitigation). Copilot still needs the recipient's GitHub sign-in + subscription post-flash.
-4. **Agentic frameworks** (checkbox) — three v1.0 entries listed (§5.1). Default: Aider on, Claude Code off, Codex CLI off. Picking none is valid — users can install post-flash.
-5. **Recommended model suggestion** (yes/no, default yes) — this does not bundle models (per ADR-005 §D3). It writes a post-flash hint to the profile suggesting `qwen3.5:4b` + `qwen3.5:9b` so the finished build report can echo the exact commands for the recipient.
-6. **Signing** (yes/no, default no for v1.0) — v1.0 ships sha256 only (ADR-006 §D5). Say yes only if you have minisign installed and your own keypair configured; the wizard will otherwise default back to sha256-only.
-7. **Confirm** — summary screen of all choices with the exact build command and env vars that will run. Approve to start the build.
+1. **Build name** — default `kintsugi-v2026.5.0-YYYYMMDD`. Output dir + artifact filename stem.
+2. **Base ISO** — path to the stock Ubuntu/Xubuntu 24.04 live ISO to remaster (the new ADR-008 input; auto-detected from `~/kintsugi-builds/_base/`).
+3. **Offline AI (Ollama)** (yes/no, default yes) — pre-installs Ollama + mikefarah `yq`, wired to a persistence-backed model store. Adds ~2.5 GB. No model weights are baked (ADR-005).
+4. **Agentic CLIs** (yes/no, default yes) — bakes claude-code, codex, opencode, copilot, openclaw, omnius, and aider, offline-available. Auth is post-flash. (VS Code/IDE is deferred — [#43](https://git.integrolabs.net/roctinam/kintsugi-usb/issues/43).)
+5. **Persistence size** — Ventoy persistence in GiB (default 32; holds `/data`, incl. the Ollama model store).
+6. **Recommended model hint** (yes/no) — does not bundle models (ADR-005); writes a post-flash `kintsugi-models pull` / `ollama pull` suggestion to the profile.
+7. **Signing** (yes/no, default no) — v1.0 ships sha256 only (ADR-006 §D5); minisign arrives in v1.1.
+8. **Confirm** — summary of all choices + the exact 3-stage pipeline. Approve to start.
 
 Build output lands at `~/kintsugi-builds/<build_name>/`:
 
 | File | Purpose |
 |---|---|
 | `build-profile.yaml` | The choices you made — resumable and replayable |
-| `build.log` | Full build output |
-| `*.iso` | The final Live ISO |
+| `build.log` | Full pipeline output |
+| `<build_name>.iso` | Remastered Kintsugi live ISO |
+| `<build_name>-ventoy.img` | Assembled Ventoy disk image (bootloader + persistence) |
+| `<build_name>.img.zst` + `.sha256` | Distributable compressed image — **flash this** |
 
 ### 6.1 Replay modes
 
@@ -260,7 +262,7 @@ The wizard always writes a profile early, so you can replay a build:
 ./scripts/kintsugi-build --dry-run --from-profile ~/kintsugi-builds/my-build/build-profile.yaml
 ```
 
-If a build crashes mid-way, rerun from the profile — the profile is schema-versioned (`schema_version: 1`) so a future wizard upgrade can migrate old profiles instead of rejecting them outright.
+If a build crashes mid-way, rerun from the profile — the profile is schema-versioned (`schema_version: 2`); `read_profile()` hard-fails on a mismatch, so re-create profiles with the matching wizard version (v1 profiles from the live-build era are not compatible).
 
 ---
 
@@ -274,30 +276,27 @@ A live ISO from step 6 is buildable and bootable, but it is not yet a **distribu
 
 ```bash
 sudo scripts/usb-toolkit/make-ventoy-image.sh \
-     --kintsugi-iso ~/kintsugi-builds/<build_name>/*.iso \
-     [--rescue-iso <iso> …] [--persistence-size 32]
+     --kintsugi-iso ~/kintsugi-builds/<build_name>/<build_name>.iso \
+     [--rescue-iso <iso> …] [--persistence-size 32] \
+     [--ollama-models <staged-ollama-store>]
+# --ollama-models pre-loads a staged Ollama store (blobs/ + manifests/) into the
+#   persistence at /data/ollama/models so the booted Ollama has the models offline.
 # --dry-run validates inputs and prints the layout without touching disks.
 ```
 
-> **Status (2026-05-24):** `make-ventoy-image.sh` ([#42](https://git.integrolabs.net/roctinam/kintsugi-usb/issues/42)) and persistence ([#34](https://git.integrolabs.net/roctinam/kintsugi-usb/issues/34)) are committed; wiring this step into a single unattended `kintsugi-build` run is in progress ([#36](https://git.integrolabs.net/roctinam/kintsugi-usb/issues/36)), and the boot/persistence round-trip is validated on hardware under [#37](https://git.integrolabs.net/roctinam/kintsugi-usb/issues/37). Until #36 lands, run this step explicitly between the ISO build and §7.1. For the fully manual Ventoy procedure this automates, see [`build-guide.md`](build-guide.md).
+> **Status:** This stage is now **auto-chained by `kintsugi-build`** ([#36](https://git.integrolabs.net/roctinam/kintsugi-usb/issues/36) landed) — the wizard runs remaster → `make-ventoy-image.sh` → `create-image.sh` with no manual steps. Run `make-ventoy-image.sh` directly only for standalone/advanced use (e.g. adding rescue ISOs or pre-loading models via `--ollama-models`). `make-ventoy-image.sh` (#42) + 32 GiB persistence (#34) are committed; the boot/persistence round-trip is validated on hardware under [#37](https://git.integrolabs.net/roctinam/kintsugi-usb/issues/37). For the fully manual Ventoy procedure this automates, see [`build-guide.md`](build-guide.md).
 
 ### 7.1 Sanitize
 
-[`docs/sanitization-checklist.md`](sanitization-checklist.md) is the authoritative list of what must be scrubbed before imaging. The automation is `scripts/prep-master.sh` (iteration-1 deliverable, Gitea #8):
+[`docs/sanitization-checklist.md`](sanitization-checklist.md) is the authoritative list of what must be scrubbed before imaging.
+
+> **Scope (ADR-008):** the remaster pipeline builds from a clean stock ISO and accumulates no secrets by construction, so the wizard's auto-chain does **not** run a sanitize pass. `scripts/prep-master.sh` is for the **legacy/manual** path — a hand-mastered USB or a mounted master partition — not the remaster output. Run it only when sanitizing such a master:
 
 ```bash
-sudo scripts/prep-master.sh ~/kintsugi-builds/<build_name>/build-root
+sudo scripts/prep-master.sh <mounted-master-or-build-root>
 ```
 
-It enforces:
-
-- Rule 1-2: no API keys, SSH private keys, shell histories carrying secrets.
-- Rule 3-6: clean shell/cache/log state in the chroot.
-- Rule 7: preserve the manifests and build-info marker.
-- Rule 8: zero-fill free space (skippable for iteration via `KINTSUGI_SKIP_ZEROFILL=1`).
-- Rule 9: schema-validate the two recommended manifests (`yq eval '.schema_version'` must equal `1`).
-
-If `prep-master.sh` reports warnings, investigate before continuing. Do not image a build root that did not pass cleanly.
+It enforces (on the manual path): no API keys / SSH private keys / secret-bearing shell histories; clean shell/cache/log state; preserve the manifests; optional free-space zero-fill; and schema-validate the `kintsugi-models` / `kintsugi-frameworks` user manifests (those are `schema_version: 1`). If it reports warnings, investigate before imaging.
 
 ### 7.2 Image
 
