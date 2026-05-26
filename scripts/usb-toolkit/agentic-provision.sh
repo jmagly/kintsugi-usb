@@ -42,9 +42,12 @@ try() {  # try <display> <cmd...>
 log "=== Kintsugi agentic provisioning ==="
 
 # --- Base runtimes -------------------------------------------------------
-log "Installing base toolchain (git, python3, pipx, curl)..."
+log "Installing base toolchain (git, python3, pipx, curl, build-essential)..."
 apt-get update >>"$LOG" 2>&1 || true
-apt-get install -y curl ca-certificates git python3 python3-venv pipx >>"$LOG" 2>&1 || true
+# build-essential: some agentic CLIs pull native node addons compiled via node-gyp
+# (e.g. omnius → hnswlib-node, a C++ vector-search lib). Without a C++ toolchain
+# `node-gyp rebuild` fails. python3 + node headers are also required (present/auto).
+apt-get install -y curl ca-certificates git python3 python3-venv pipx build-essential >>"$LOG" 2>&1 || true
 
 # Node 22 LTS via NodeSource (noble's apt node is too old for some CLIs).
 log "Installing Node 22 LTS (NodeSource)..."
