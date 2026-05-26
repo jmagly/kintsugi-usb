@@ -12,23 +12,23 @@ This file provides guidance to Claude Code when working with this codebase.
 The drive is a Ventoy-based multi-boot USB built on top of Ubuntu 24.04 Desktop (with persistence) that ships with:
 
 - Rescue ISOs (SystemRescue, Clonezilla, GParted Live, Memtest86+)
-- Offline LLM inference stack (`llama.cpp` + Qwen GGUF models)
-- Online LLM stack (`claude` CLI)
-- Host-specific recovery runbooks and AGENT-CONTEXT packs
+- Offline LLM stack (Ollama + `llama.cpp`); model weights are user-loaded into persistence (`/data/ollama/models`), never baked into the read-only image (ADR-005)
+- Pre-installed agentic CLIs (claude-code, codex, opencode, copilot, openclaw, omnius, aider); auth is a post-flash user step (ADR-006 §D5). Hermes installs on demand via `kintsugi-install-hermes`.
+- Host-specific recovery packs the drive *carries* (operator-provided from the fleet repos — authored in sysops/itops, not in this public repo)
 - Fleet inventory and diagnostic scripts
 
 See [README.md](README.md) for user-facing overview and [docs/about-the-name.md](docs/about-the-name.md) for the naming rationale.
 
-This repo is the public distribution point. The drive itself carries a snapshot of this repo's `docs/` and `scripts/` at imaging time; recipients can update in the field via `scripts/update-payload.sh` once it exists.
+This repo is the public distribution point. The drive carries a snapshot of this repo's `docs/` and `scripts/` at imaging time; recipients update in the field via `git pull` + `ollama pull` (see [docs/update-strategy.md](docs/update-strategy.md)) — a reflash is only needed for base-image changes.
 
 ## Tech Stack
 
-- **Boot**: Ventoy multi-boot, GRUB (UEFI + legacy)
-- **Base OS**: Ubuntu 24.04 LTS Desktop (persistent)
-- **AI**: `llama.cpp`, GGUF models (Qwen 3.5 4B/9B), `claude` CLI
-- **Imaging**: `dd`, `zstd`, `sha256sum`, Ventoy installer
-- **Scripting**: Bash
-- **Docs**: Markdown
+- **Boot**: Ventoy multi-boot (UEFI + BIOS); inner ISO is GRUB+isolinux (preserved from the stock Ubuntu image)
+- **Base OS**: Ubuntu 24.04 LTS (Xubuntu minimal, persistent via Ventoy)
+- **Build**: remaster the stock Ubuntu 24.04 ISO via `livefs-edit` (squashfs repacked with xz) — [ADR-008](.aiwg/architecture/adr-008-build-tooling-remaster-stock-iso.md), supersedes the ADR-007 live-build approach
+- **AI**: Ollama + `llama.cpp` (offline runtime); agentic CLIs (claude-code/codex/opencode/copilot/openclaw/omnius/aider)
+- **Imaging**: Ventoy installer, `dd`, `zstd`, `sha256sum`
+- **Scripting**: Bash · **Docs**: Markdown
 
 ## Directory Layout
 
@@ -40,11 +40,26 @@ docs/                           # Authoritative build/use docs
 ├── about-the-name.md           # Etymology + philosophy
 ├── requirements.md             # Project requirements
 ├── architecture.md             # Design: Ventoy + persistence + AI layer
-├── build-guide.md              # Master USB build from scratch
+├── build-guide.md              # Manual/reference build (Ventoy mechanics)
+├── toolkit-guide.md            # External-builder walkthrough
+├── wizard-guide.md             # kintsugi-build reference (prompts, schema, flags)
+├── update-strategy.md          # Post-flash refresh model
+├── sanitization-checklist.md   # Pre-imaging secret-scan + hygiene rules
 ├── physical-test-guide.md      # Physical hardware test procedure
 └── test-strategy.md            # Test strategy
-scripts/                        # Image pipeline + payload update tools (TBD)
-manifest/                       # ISO/tool/model manifests + checksums (TBD)
+scripts/                        # Build wizard + imaging pipeline
+├── kintsugi-build              # ⭐ single-command build wizard (remaster → ventoy → package)
+├── create-image.sh             # package a built image → <name>.img.zst + .sha256
+├── flash-image.sh / verify-image.sh / prep-master.sh / publish-release.sh
+└── usb-toolkit/                # remaster + on-USB tooling
+    ├── make-remaster-iso.sh    # ADR-008 builder (remaster stock ISO)
+    ├── agentic-provision.sh    # in-chroot: the 6 agentic CLIs (+aider)
+    ├── ai-stack-provision.sh   # in-chroot: Ollama + mikefarah yq
+    ├── make-ventoy-image.sh    # assemble Ventoy .img (+ persistence, + --ollama-models)
+    ├── kintsugi-models / kintsugi-frameworks / kintsugi-install-hermes
+    ├── first-boot-setup.sh / start-ai.sh / usb-test-harness.sh
+    └── build-custom-iso.sh     # superseded live-build builder (ADR-007→008; provenance)
+manifest/                       # models-recommended.yaml, agentic-frameworks-recommended.yaml, THIRD-PARTY-LICENSES.md
 .aiwg/                          # SDLC artifacts (intake, requirements, architecture, …)
 ```
 
@@ -101,19 +116,21 @@ This repo is **public**. Before committing:
 
 - Never commit `.env`, tokens, SSH keys, API keys, or fleet secrets
 - Never commit images (`*.img`, `*.img.zst`) — publish via Gitea releases
-- Sanitize any persistence-file content before packaging (see `scripts/prep-master.sh` once written)
+- Sanitize any mastered-USB/persistence content before packaging (`scripts/prep-master.sh` — for the manual/master path; the remaster build is clean by construction)
 - Host-specific recovery packs may reference internal hostnames but must not contain credentials
 
 ### Distribution Workflow
 
-1. **Build** a master USB using `docs/build-guide.md` (still sysops-era content; will be refined)
-2. **Prep** the master for imaging — zero free space, flush caches, sanitize persistence (script TBD)
-3. **Image** the master into a compressed distributable archive (script TBD)
-4. **Publish** the image as a Gitea release with SHA-256 checksum
-5. **Flash** recipients' USBs from the published image (script TBD)
-6. **Update** deployed USBs' payloads in the field via rsync to Ventoy partition (script TBD)
+The `kintsugi-build` wizard auto-chains steps 1–3 (ADR-008 remaster pipeline); the rest are per-build operations:
 
-Scripts and per-step docs are tracked as issues in this repo.
+1. **Build** the custom ISO — `scripts/usb-toolkit/make-remaster-iso.sh` remasters the stock Ubuntu 24.04 ISO (rescue tools + agentic CLIs + offline AI stack).
+2. **Assemble** the Ventoy `.img` — `scripts/usb-toolkit/make-ventoy-image.sh` (bootloader + persistence; optional pre-loaded models via `--ollama-models`).
+3. **Package** into a distributable archive — `scripts/create-image.sh` → `<name>.img.zst` + `.sha256`.
+4. **Publish** as a Gitea release — `scripts/publish-release.sh` (sha256-verified; minisign signing arrives in v1.1, #19).
+5. **Flash** recipients' USBs — `scripts/flash-image.sh` (+ `verify-image.sh` post-flash check).
+6. **Update** deployed USBs in the field — `git pull` + `ollama pull` per [docs/update-strategy.md](docs/update-strategy.md); reflash only for base-image changes.
+
+A fresh clone runs the whole thing with `./scripts/kintsugi-build`. Per-step work is tracked as issues in this repo.
 
 ## AIWG Framework Integration
 
