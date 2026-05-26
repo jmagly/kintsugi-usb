@@ -203,7 +203,7 @@ generated_at: "$(date -Iseconds)"
 
 build_name: "${PROFILE_BUILD_NAME}"
 base_iso: "${PROFILE_BASE_ISO}"
-include_agentic: ${PROFILE_INCLUDE_AGENTIC}     # claude-code, codex, opencode, copilot, openclaw, aider
+include_agentic: ${PROFILE_INCLUDE_AGENTIC}     # claude-code, codex, opencode, copilot, openclaw, omnius, aider
 include_ai_stack: ${PROFILE_INCLUDE_AI_STACK}   # Ollama + mikefarah yq (offline LLM runtime)
 persistence_gib: ${PROFILE_PERSISTENCE_GIB}
 models_post_flash: [${models_yaml}]
@@ -269,7 +269,7 @@ run_interactive() {
 
     # 4. Agentic CLI platforms
     PROFILE_INCLUDE_AGENTIC=$(ask_yesno "Agentic CLIs" \
-        "Pre-install the AIWG-supported agentic coding CLIs?\n\nBakes: claude-code, codex, opencode, copilot, openclaw (+ aider). Offline-available; you sign in with your own credentials post-flash.\n\n(VS Code/IDE is tracked separately — Gitea #43.)" \
+        "Pre-install the AIWG-supported agentic coding CLIs?\n\nBakes: claude-code, codex, opencode, copilot, openclaw, omnius (+ aider). Offline-available; you sign in with your own credentials post-flash.\n\n(VS Code/IDE is tracked separately — Gitea #43.)" \
         "y")
 
     # 5. Persistence size (#34)
@@ -315,7 +315,7 @@ Build name:        ${PROFILE_BUILD_NAME}
 Output dir:        ${build_dir}/
 Base ISO:          ${PROFILE_BASE_ISO}
 Offline AI:        ${PROFILE_INCLUDE_AI_STACK}   (Ollama + yq)
-Agentic CLIs:      ${PROFILE_INCLUDE_AGENTIC}   (claude/codex/opencode/copilot/openclaw + aider)
+Agentic CLIs:      ${PROFILE_INCLUDE_AGENTIC}   (claude/codex/opencode/copilot/openclaw/omnius + aider)
 Persistence:       ${PROFILE_PERSISTENCE_GIB} GiB
 Post-flash models: ${PROFILE_MODELS_POST_FLASH:-<none suggested>}
 Signing:           ${PROFILE_SIGN_RELEASE}  (v1.0: sha256 always; minisign in v1.1)

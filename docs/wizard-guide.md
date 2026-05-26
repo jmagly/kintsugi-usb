@@ -70,7 +70,7 @@ Runs the wizard, writes the profile, prints the **exact three-stage pipeline** t
 ./scripts/kintsugi-build --help
 ```
 
-Prints the usage, flags, version (wizard `0.2.0`, schema `2`), and key env vars.
+Prints the usage, flags, version (wizard `0.2.0`), and key env vars.
 
 ---
 
@@ -100,7 +100,7 @@ The interactive prompts run in a fixed order (whiptail, or plain `read` fallback
 
 **Question**: *"Pre-install the AIWG-supported agentic coding CLIs?"*
 **Default**: Yes.
-**Controls**: `--with-agentic`. Bakes the five AIWG-supported CLI providers — **claude-code, codex, opencode, copilot, openclaw** (npm globals on Node 22) — plus **aider** (pipx). All offline-available after build; you sign in with your own credentials post-flash (no auth is ever baked — ADR-006 §D5). `hermes` is **not** baked (per-user `curl|bash` install); run `kintsugi-install-hermes` in the live session if you want it. The VS Code/IDE option is deferred (#43).
+**Controls**: `--with-agentic`. Bakes the five AIWG-supported CLI providers — **claude-code, codex, opencode, copilot, openclaw** (npm globals on Node 22) — plus **omnius** (operator-requested, omnius.nexus) and **aider** (pipx). All offline-available after build; you sign in with your own credentials post-flash (no auth is ever baked — ADR-006 §D5). `hermes` is **not** baked (per-user `curl|bash` install); run `kintsugi-install-hermes` in the live session if you want it. The VS Code/IDE option is deferred (#43).
 
 ### 3.5 Persistence size
 
@@ -156,7 +156,7 @@ generated_at: "2026-05-25T14:30:00-04:00"
 
 build_name: "kintsugi-v2026.5.0-20260525"
 base_iso: "/home/you/kintsugi-builds/_base/xubuntu-24.04.4-minimal-amd64.iso"
-include_agentic: true     # claude-code, codex, opencode, copilot, openclaw, aider
+include_agentic: true     # claude-code, codex, opencode, copilot, openclaw, omnius, aider
 include_ai_stack: true    # Ollama + mikefarah yq
 persistence_gib: 32
 models_post_flash: ["qwen3.5:4b", "qwen3.5:9b"]
@@ -173,7 +173,7 @@ signing:
 | `generated_by` / `generated_at` | string | auto | Informational. |
 | `build_name` | string | `kintsugi-v2026.5.0-YYYYMMDD` | Build dir + artifact filename stem. |
 | `base_iso` | string | `""` (auto-detect) | Stock ISO to remaster (`--base`). Empty → newest `*.iso` under `_base/`. |
-| `include_agentic` | bool | `true` | → `--with-agentic` (5 AIWG CLIs + aider). |
+| `include_agentic` | bool | `true` | → `--with-agentic` (5 AIWG CLIs + omnius + aider). |
 | `include_ai_stack` | bool | `true` | → `--with-ai-stack` (Ollama + yq). |
 | `persistence_gib` | int | `32` | → `--persistence-size` (#34). |
 | `models_post_flash[]` | string list | `["qwen3.5:4b","qwen3.5:9b"]` | Post-build `kintsugi-models pull` hints. Not baked. |
