@@ -162,6 +162,24 @@ UNIT
         log "Fleet hosts added to /etc/hosts from /etc/kintsugi/fleet-hosts"
     fi
 
+    # Ollama model store on persistence. OLLAMA_MODELS defaults to ~/.ollama, which is
+    # ephemeral on a live boot — redirect it to /data (Ventoy persistence) so models
+    # pulled in the field, AND any models pre-loaded onto the drive, survive reboots.
+    # The read-only ISO stays model-free (ADR-005); models live in the writable layer.
+    mkdir -p /data/ollama/models
+    cat > /etc/profile.d/kintsugi-ollama.sh <<'PROF'
+# Kintsugi: Ollama model store on persistence (/data survives reboots)
+export OLLAMA_MODELS=/data/ollama/models
+PROF
+    chmod 0644 /etc/profile.d/kintsugi-ollama.sh
+    # systemd drop-in — honored if ollama.service is ever enabled instead of start-ai.sh
+    mkdir -p /etc/systemd/system/ollama.service.d
+    cat > /etc/systemd/system/ollama.service.d/10-kintsugi-models.conf <<'OVR'
+[Service]
+Environment="OLLAMA_MODELS=/data/ollama/models"
+OVR
+    log "Ollama model store wired to persistence: /data/ollama/models"
+
     # Custom bashrc for root
     if ! grep -q "ML-Support" /root/.bashrc 2>/dev/null; then
         cat >> /root/.bashrc <<'BASHRC'

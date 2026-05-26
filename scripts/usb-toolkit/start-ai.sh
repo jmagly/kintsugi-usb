@@ -240,6 +240,11 @@ start_ollama() {
         log "Ollama already running on :${OLLAMA_PORT}"
         return 0
     fi
+    # Use the persistence-backed model store (/data survives reboots) so pulled and
+    # pre-loaded models persist. Defaults to ~/.ollama (ephemeral on a live boot) otherwise.
+    export OLLAMA_MODELS="${OLLAMA_MODELS:-/data/ollama/models}"
+    mkdir -p "$OLLAMA_MODELS" 2>/dev/null || true
+    log "Ollama model store: ${OLLAMA_MODELS}"
     # Ollama is intended to run as a systemd user service; if it isn't, start a backgrounded daemon.
     if systemctl --user is-enabled ollama.service &>/dev/null; then
         systemctl --user start ollama.service 2>/dev/null || true
