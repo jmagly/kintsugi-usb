@@ -84,9 +84,17 @@ COUNT=$(wc -l < "$MANIFEST" 2>/dev/null || echo 0)
 log "=== done — ${COUNT} agentic platform(s) pre-installed ==="
 sed 's/^/  - /' "$MANIFEST" 2>/dev/null | tee -a "$LOG" >&2
 
+# Reclaim the C/C++ build toolchain — it was only needed at build time to compile
+# native node addons (omnius → hnswlib-node). The compiled .node stays and links
+# against runtime libs (libstdc++6/libc6, which remain). Shipping gcc/g++/-dev
+# pushed the base squashfs past the ISO9660 4 GiB per-file ceiling.
+log "reclaiming build toolchain (build-essential) to keep the squashfs under 4 GiB..."
+apt-get purge -y build-essential >>"$LOG" 2>&1 || true
+apt-get autoremove -y --purge >>"$LOG" 2>&1 || true
+
 # Keep the squashfs lean.
 apt-get clean >>"$LOG" 2>&1 || true
-rm -rf /var/lib/apt/lists/* /root/.npm /root/.cache 2>/dev/null || true
+rm -rf /var/lib/apt/lists/* /root/.npm /root/.cache /root/.node-gyp 2>/dev/null || true
 
 # Always succeed — per-platform failures are recorded, not fatal to the build.
 exit 0
