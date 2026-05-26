@@ -136,8 +136,24 @@ fi
 
 mkdir -p "$(dirname "$OUTPUT")"
 
-head1 "Remastering (livefs-editor) — this takes several minutes"
-if ! "$LIVEFS_EDIT" "$BASE" "$OUTPUT" "${ACTIONS[@]}"; then
+# Force xz squashfs compression so the model/agentic-laden base layer stays under the
+# ISO9660 4 GiB per-file ceiling (default gzip overflows it once Ollama + the agentic
+# CLIs + omnius are in). livefs-edit calls `mksquashfs` by bare name, so we shim it on
+# PATH rather than patch the third-party tool. xz + x86 BCJ + 1M blocks = Ubuntu's own
+# livecd-rootfs settings (~25-35% smaller than gzip).
+SQUASH_WRAP="$(mktemp -d)"
+REAL_MKSQUASHFS="$(command -v mksquashfs || echo /usr/bin/mksquashfs)"
+cat > "$SQUASH_WRAP/mksquashfs" <<WRAP
+#!/bin/bash
+# Kintsugi xz shim — appends -comp xz unless the caller already chose a compressor.
+for a in "\$@"; do [ "\$a" = "-comp" ] && exec "$REAL_MKSQUASHFS" "\$@"; done
+exec "$REAL_MKSQUASHFS" "\$@" -comp xz -b 1M -Xbcj x86 -no-progress
+WRAP
+chmod +x "$SQUASH_WRAP/mksquashfs"
+trap 'rm -rf "$SQUASH_WRAP"' EXIT
+
+head1 "Remastering (livefs-editor) — this takes several minutes (xz repack)"
+if ! PATH="$SQUASH_WRAP:$PATH" "$LIVEFS_EDIT" "$BASE" "$OUTPUT" "${ACTIONS[@]}"; then
     die "livefs-edit remaster failed" 2
 fi
 
