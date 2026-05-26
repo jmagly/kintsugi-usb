@@ -120,7 +120,7 @@ info "  Output:       $OUTPUT"
 info "  livefs-edit:  $LIVEFS_EDIT"
 info "  Packages:     $(echo "$PACKAGES" | wc -w) rescue packages"
 info "  Scripts:      $RUNTIME_SCRIPTS"
-if [ "$WITH_AGENTIC" = "1" ]; then info "  Agentic:      claude-code, codex, opencode, copilot, openclaw, aider (pre-installed in-chroot)"; fi
+if [ "$WITH_AGENTIC" = "1" ]; then info "  Agentic:      claude-code, codex, opencode, copilot, openclaw, omnius, aider (pre-installed in-chroot)"; fi
 if [ "$WITH_AI_STACK" = "1" ]; then info "  AI core:      Ollama + mikefarah yq (offline LLM runtime; models pulled post-flash) [#43]"; fi
 info ""
 info "  livefs-edit \"$BASE\" \"$OUTPUT\" \\"

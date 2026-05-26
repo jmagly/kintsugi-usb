@@ -13,7 +13,8 @@
 # post-flash user responsibility (ADR-006 §D5). This installs CLIs only.
 #
 # Baked (verified, clean install): claude-code, codex, opencode, copilot, openclaw
-# (npm globals → /usr/local, available to every user immediately).
+# (the 5 AIWG providers) + omnius (operator-requested, omnius.nexus)
+# — npm globals → /usr/bin, available to every user immediately.
 #
 # Not installed here (tracked separately, by design):
 #   - hermes   : NousResearch hermes-agent — installs via curl|bash into a PER-USER
@@ -21,7 +22,6 @@
 #                install and is heavy. Candidate for a first-boot/opt-in installer.
 #   - cursor/windsurf/warp/factory : GUI/desktop IDEs (AppImage/deb), not CLI tools;
 #                heavy and out of scope for a CLI-focused rescue drive.
-#   - "omnius" : not an AIWG-supported provider (not in the capability matrix).
 
 set -u
 export DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8
@@ -62,8 +62,10 @@ if command -v npm >/dev/null 2>&1; then
     # openclaw: AIWG provider, clean npm package (needs Node >=22.19; we ship 22.22).
     # The `openclaw onboard --install-daemon` step is post-flash (like auth) — not baked.
     try "openclaw"    npm install -g openclaw@latest
+    # omnius (omnius.nexus): operator-requested tool, clean npm package (Node >=22).
+    try "omnius"      npm install -g omnius
 else
-    log "  ✗ npm missing — skipping npm-based platforms (claude-code, codex, opencode, copilot, openclaw)"
+    log "  ✗ npm missing — skipping npm-based platforms (claude-code, codex, opencode, copilot, openclaw, omnius)"
 fi
 
 if command -v pipx >/dev/null 2>&1; then
