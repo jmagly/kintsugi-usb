@@ -1,25 +1,96 @@
+<div align="center">
+
 # Kintsugi USB
 
-> *Rescue your fleet. Honor the break.*
+**Rescue your fleet. Honor the break.**
 
-AI-assisted rescue boot media for broken systems. A Ventoy-based live USB that boots almost any UEFI machine into a full Ubuntu desktop with rescue tooling, offline LLM inference, and host-specific recovery runbooks ready to hand to an AI agent.
+AI-assisted rescue boot media for broken systems. A Ventoy multi-boot USB on Ubuntu 24.04 (with persistence) carrying rescue ISOs, an **offline LLM stack** (Ollama + llama.cpp), **seven pre-installed agentic CLIs**, and host-specific recovery runbooks ready to hand to an AI agent — built from a fresh clone with one command.
 
-Built for home-lab and small-fleet operators who need a "final level of recovery" — one USB that works whether the internet is up or down, whether you know what's broken or not, and whether the person holding it is the one who built the fleet or not.
+```bash
+./scripts/kintsugi-build        # fresh clone + blank USB → a flashable, personalized .img.zst
+```
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
+[![Version](https://img.shields.io/badge/version-2026.5.0--pre-orange?style=flat-square)](.aiwg/planning/roadmap.md)
+[![Boot](https://img.shields.io/badge/boot-UEFI%20%2B%20BIOS-brightgreen?style=flat-square)](#whats-on-it)
+[![Base](https://img.shields.io/badge/base-Ubuntu%2024.04-E95420?style=flat-square&logo=ubuntu&logoColor=white)](#whats-on-it)
+[![Offline AI](https://img.shields.io/badge/offline%20AI-Ollama%20%2B%20llama.cpp-blueviolet?style=flat-square)](#whats-on-it)
+
+[**What's on it**](#whats-on-it) · [**Quick Start**](#quick-start-for-recipients) · [**Build Your Own**](#build-your-own) · [**Documentation**](#documentation) · [**Issues**](#issues)
+
+</div>
+
+---
+
+## What Kintsugi USB Is
+
+A "final level of recovery" for home-lab and small-fleet operators: **one USB that works whether the internet is up or down, whether you know what's broken or not, and whether the person holding it built the fleet or not.** It boots almost any UEFI or BIOS machine into a full Ubuntu desktop with rescue tooling and a local AI assistant that can read host-specific runbooks and help drive the repair.
+
+This repo is also the **toolkit** that produces the drive: a wizard remasters a stock Ubuntu ISO into a personalized, flashable image. Fork it to roll your own Kintsugi-like USB with your own model set, agentic tools, runbooks, and (from v1.1) signing key.
 
 ## What's on it
 
-- **Ventoy multi-boot loader** — pick your ISO at boot
-- **Ubuntu 24.04 Desktop** with persistence — full desktop OS, state survives reboots
-- **Rescue ISOs** — SystemRescue, Clonezilla, GParted Live, Memtest86+
-- **Offline AI stack** — `llama.cpp` + Ollama, both available as local runtimes. No model weights ship with the image — you load your own via the `kintsugi-models` CLI either at build-time or at first boot on a trusted network. Start with the maintainer's tested recommendations in [`manifest/models-recommended.yaml`](manifest/models-recommended.yaml) or choose anything from the Ollama registry or HuggingFace.
-- **Online AI stack** — `claude` / `codex` / `aider` CLIs for when you have internet
-- **Recovery runbooks** — host-specific AGENT-CONTEXT and RUNBOOK packs an AI can consume directly
-- **Fleet scripts** — inventory, drive health, SSH keychain, build tools
-- **Toolkit/SDK** — this repo is also a toolkit. External builders can fork it to roll their own Kintsugi-like USB with their own model set, their own signing key, their own runbooks. See [`docs/toolkit-guide.md`](docs/toolkit-guide.md).
+- **Ventoy multi-boot loader** — UEFI + BIOS; pick your ISO at boot, with persistence so state survives reboots.
+- **Ubuntu 24.04 Desktop** (Xubuntu base) — full desktop OS for hands-on rescue.
+- **Rescue ISOs** — SystemRescue, Clonezilla, GParted Live, Memtest86+ *(catalog in progress, [#35](https://git.integrolabs.net/roctinam/kintsugi-usb/issues/35))*.
+- **Offline AI stack** — Ollama (with `llama.cpp` available) as a local runtime, pre-installed and wired to a persistence-backed model store (`/data/ollama/models`) so models pulled in the field survive reboots. No model weights ship in the read-only image by default ([ADR-005](.aiwg/architecture/adr-005-toolkit-scope-and-user-driven-models.md)); the operator loads their own via `kintsugi-models` / `ollama pull`, or pre-loads them into the drive's persistence at build time. Start from [`manifest/models-recommended.yaml`](manifest/models-recommended.yaml).
+- **Agentic CLIs (pre-installed)** — Claude Code, Codex, OpenCode, Copilot, OpenClaw, omnius, and Aider, baked in and offline-available. You sign in with your own credentials post-flash — no auth is ever baked. Add or manage more via `kintsugi-frameworks`; the heavier Hermes agent installs on demand via `kintsugi-install-hermes`.
+- **Recovery runbooks** — host-specific AGENT-CONTEXT and RUNBOOK packs an AI can consume directly (operator-provided from the fleet repos; not in this public repo).
+- **Fleet scripts** — inventory, drive health, build/imaging pipeline, and the `kintsugi-build` wizard.
 
-## About the name
+## How it's built
 
-See [docs/about-the-name.md](docs/about-the-name.md) for the etymology and philosophy behind *Kintsugi*.
+`kintsugi-build` **remasters the stock Ubuntu 24.04 ISO** ([ADR-008](.aiwg/architecture/adr-008-build-tooling-remaster-stock-iso.md)) — starting from a known-good UEFI+BIOS-bootable image and injecting the rescue tools, agentic CLIs, and offline AI stack into the squashfs — then assembles a Ventoy disk image with persistence and packages a distributable `.img.zst`. The whole pipeline runs unattended from one command.
+
+## Quick Start for recipients
+
+You received a Kintsugi USB image. Here's how to use it.
+
+### 1. Verify before you flash
+
+Every release ships a companion `.sha256`. Check it — if it does not match, **do not flash** (re-download or report via [SECURITY.md](SECURITY.md)):
+
+```bash
+./scripts/verify-image.sh kintsugi-v2026.5.0.img.zst
+# manual equivalent:
+( cd /path/to/download && sha256sum -c kintsugi-v2026.5.0.img.zst.sha256 )
+```
+
+### 2. Flash to a USB
+
+> ⚠ This destroys everything on the target device. Identify it with `lsblk` and pick carefully.
+
+```bash
+# Guided flasher (recommended — guards against system disks, verifies after)
+sudo ./scripts/flash-image.sh kintsugi-v2026.5.0.img.zst /dev/sdX
+
+# Or directly:
+zstdcat kintsugi-v2026.5.0.img.zst | sudo dd of=/dev/sdX bs=4M status=progress conv=fsync && sync
+```
+
+### 3. Boot and use
+
+1. Plug in the USB, enter the boot menu, select it, and pick the Kintsugi entry in the Ventoy menu.
+2. The agentic CLIs are already installed — sign in with your own credentials when you have a network.
+3. Local inference (offline):
+   ```bash
+   start-ai.sh                       # start Ollama against the persistence model store
+   ollama list                       # models pre-loaded on the drive (if any)
+   kintsugi-models pull qwen3.5:4b   # or pull more on a trusted network
+   ```
+
+See [`docs/update-strategy.md`](docs/update-strategy.md) for keeping the USB current over time.
+
+## Build Your Own
+
+Wizard-first: one command walks you from fresh clone + blank USB to a flashable personalized image.
+
+```bash
+./scripts/kintsugi-build          # interactive TUI (defaults give a working build)
+./scripts/kintsugi-build --help   # all modes (--from-profile, --dry-run, …)
+```
+
+Full external-builder walkthrough: [`docs/toolkit-guide.md`](docs/toolkit-guide.md). Per-screen reference: [`docs/wizard-guide.md`](docs/wizard-guide.md).
 
 ## Documentation
 
@@ -28,112 +99,41 @@ See [docs/about-the-name.md](docs/about-the-name.md) for the etymology and philo
 | [docs/about-the-name.md](docs/about-the-name.md) | Name origin, meaning, why it fits |
 | [docs/requirements.md](docs/requirements.md) | Project requirements |
 | [docs/architecture.md](docs/architecture.md) | Design: Ventoy + persistence + AI layer |
-| [docs/build-guide.md](docs/build-guide.md) | Build a master USB from scratch |
+| [docs/build-guide.md](docs/build-guide.md) | Manual / reference build (Ventoy mechanics, stock-ISO acquisition) |
+| [docs/wizard-guide.md](docs/wizard-guide.md) | `kintsugi-build` reference: prompts, flags, profile schema, troubleshooting |
+| [docs/toolkit-guide.md](docs/toolkit-guide.md) | External-builder walkthrough: fork → choose models/tools → build → release |
 | [docs/physical-test-guide.md](docs/physical-test-guide.md) | Testing on physical hardware |
 | [docs/test-strategy.md](docs/test-strategy.md) | Test strategy |
-| [docs/toolkit-guide.md](docs/toolkit-guide.md) | External-builder walkthrough: fork → choose models → build → sign → release |
-| [docs/wizard-guide.md](docs/wizard-guide.md) | `kintsugi-build` wizard reference: prompts, flags, profile YAML schema, troubleshooting |
-| [docs/update-strategy.md](docs/update-strategy.md) | Post-flash refresh model — `git pull` + `kintsugi-models pull`; reflash only for base-image changes |
-| [docs/sanitization-checklist.md](docs/sanitization-checklist.md) | Pre-imaging secret scan + hygiene rules (consumed by `prep-master.sh`) |
+| [docs/update-strategy.md](docs/update-strategy.md) | Post-flash refresh model — `git pull` + `ollama pull`; reflash only for base-image changes |
+| [docs/sanitization-checklist.md](docs/sanitization-checklist.md) | Pre-imaging secret scan + hygiene rules |
 
-**SDLC artifacts** ([`.aiwg/`](.aiwg/)): full intake, requirements, architecture (SAD + ADRs 001–006), risks, test strategy, iteration-1 plan, and [roadmap](.aiwg/planning/roadmap.md). Start at [`.aiwg/reports/construction-ready-brief.md`](.aiwg/reports/construction-ready-brief.md).
+**SDLC artifacts** ([`.aiwg/`](.aiwg/)): intake, requirements, architecture (SAD + ADRs 001–008), risks, test strategy, iteration plan, and the [roadmap](.aiwg/planning/roadmap.md). Start at [`.aiwg/reports/construction-ready-brief.md`](.aiwg/reports/construction-ready-brief.md).
+
+See [docs/about-the-name.md](docs/about-the-name.md) for the etymology and philosophy behind *Kintsugi*.
 
 ## Status
 
-**v2026.5.0** — first tagged release. The wizard-first build toolkit is feature-complete: `./scripts/kintsugi-build` takes a fresh clone to a flashable, personalized `.img.zst` + sha256. Images are integrity-verified by sha256 over NFS-internal distribution; cryptographic signing (minisign) lands in a later release. See [`.aiwg/planning/roadmap.md`](.aiwg/planning/roadmap.md) for what's next.
+**v2026.5.0 — pre-release.** The wizard-first toolkit auto-chains end-to-end ([#36](https://git.integrolabs.net/roctinam/kintsugi-usb/issues/36)): `./scripts/kintsugi-build` takes a fresh clone to a flashable `.img.zst` + sha256 via the ADR-008 remaster pipeline, with the offline AI stack and agentic CLIs baked in. The tag is **gated on the hardware-acceptance round-trip** ([#37](https://git.integrolabs.net/roctinam/kintsugi-usb/issues/37)) — build → flash → boot → persistence verified on real hardware. See the [roadmap](.aiwg/planning/roadmap.md) for what's next.
 
-Versioning follows **CalVer** (`YYYY.M.PATCH`).
-
-## Issues
-
-Issues are tracked in Gitea: https://git.integrolabs.net/roctinam/kintsugi-usb/issues
-
-## License
-
-**MIT** — see [LICENSE](LICENSE). The repository (scripts, docs, YAML manifests) is MIT-licensed. Bundled third-party binaries retain their own licenses — see `manifest/THIRD-PARTY-LICENSES.md` (iteration-1 deliverable). Model weights and agentic-framework binaries are user-fetched at build-time or boot-time and carry their own licenses; the user is responsible for reviewing those before use.
+Versioning follows **CalVer** (`YYYY.M.PATCH`). Distribution is sha256-verified; cryptographic signing (minisign) lands in v1.1 ([#19](https://git.integrolabs.net/roctinam/kintsugi-usb/issues/19)).
 
 ## Release signing & public key
 
-> **Reserved — populated when v1.1 signing lands ([issue #19](https://git.integrolabs.net/roctinam/kintsugi-usb/issues/19)).** v2026.5.0 ships sha256-only verification per [ADR-006 §D5](.aiwg/architecture/adr-006-wizard-first-ux-and-user-driven-agentic-frameworks.md). Until a key is published here, treat any file claiming to be `kintsugi.pub` as untrusted.
+> **Reserved — populated when v1.1 signing lands ([#19](https://git.integrolabs.net/roctinam/kintsugi-usb/issues/19)).** v2026.5.0 ships sha256-only verification per [ADR-006 §D5](.aiwg/architecture/adr-006-wizard-first-ux-and-user-driven-agentic-frameworks.md). Until a key is published here, treat any file claiming to be `kintsugi.pub` as untrusted.
 
-From v1.1, maintainer-produced release artifacts carry a [minisign](https://jedisct1.github.io/minisign/) (Ed25519) signature. Pin the maintainer's public key from this block — verifying against a key you fetched out-of-band (here, over HTTPS from the canonical repo) is what makes a signature meaningful:
+From v1.1, maintainer-produced artifacts carry a [minisign](https://jedisct1.github.io/minisign/) (Ed25519) signature; pin the key from this block (verifying against a key fetched out-of-band is what makes a signature meaningful):
 
 ```text
 untrusted comment: kintsugi-usb release signing key (Ed25519)
 <PUBKEY-PENDING-v1.1>
 ```
 
-Verify a signed release with the bundled wrapper (it checks sha256 first, then the signature if a `.minisig` and `kintsugi.pub` are present):
-
-```bash
-./scripts/verify-image.sh kintsugi-v2026.5.0.img.zst
-```
-
 Rotation history and the secret-key custody model are documented in [SECURITY.md](SECURITY.md#release-signing-key).
 
-## Quick start for recipients
+## Issues
 
-You received a Kintsugi USB image file. Here's how to use it.
+Tracked in Gitea: https://git.integrolabs.net/roctinam/kintsugi-usb/issues
 
-### 1. Verify before you flash
+## License
 
-Every release ships with a companion `.sha256` file. Check it:
-
-```bash
-# Linux / macOS
-./scripts/verify-image.sh kintsugi-v2026.5.0.img.zst
-
-# Equivalent manual check
-( cd /path/to/download && sha256sum -c kintsugi-v2026.5.0.img.zst.sha256 )
-```
-
-If the checksum does not match, **do not flash**. Re-download or report via [SECURITY.md](SECURITY.md).
-
-### 2. Flash to a USB
-
-⚠ This destroys everything on the target device. Pick carefully.
-
-```bash
-# Guided flasher (recommended — safety checks for system disks, post-flash sanity check)
-sudo ./scripts/flash-image.sh kintsugi-v2026.5.0.img.zst /dev/sdX
-
-# Or directly with dd (if you already know what you're doing)
-zstdcat kintsugi-v2026.5.0.img.zst | sudo dd of=/dev/sdX bs=4M status=progress conv=fsync
-sync
-```
-
-`lsblk` or `sudo dmesg | tail` will help identify the correct `/dev/sdX` for your USB.
-
-### 3. Boot and populate
-
-1. Plug the flashed USB into the target machine, enter the BIOS/UEFI boot menu, select the USB.
-2. On first boot, connect to a trusted network if you want AI features.
-3. Pull your chosen local models:
-   ```bash
-   kintsugi-models list                 # see what's recommended
-   kintsugi-models pull qwen3.5:4b      # or qwen3.5:9b on ≥16 GB hosts
-   ```
-4. Install any agentic CLIs you want on the drive:
-   ```bash
-   kintsugi-frameworks list
-   sudo kintsugi-frameworks install aider
-   ```
-5. Check the AI stack is live:
-   ```bash
-   start-ai.sh --status
-   ```
-
-See [`docs/update-strategy.md`](docs/update-strategy.md) for keeping the USB current over time.
-
-## Build your own
-
-This repo is wizard-first: a single command walks you from fresh clone + blank USB to a flashable personalized image:
-
-```bash
-./scripts/kintsugi-build         # interactive TUI
-./scripts/kintsugi-build --help  # all modes
-```
-
-Full external-builder walkthrough: [`docs/toolkit-guide.md`](docs/toolkit-guide.md). Wizard reference: [`docs/wizard-guide.md`](docs/wizard-guide.md).
-
-Track open work in the [roadmap](.aiwg/planning/roadmap.md) and at https://git.integrolabs.net/roctinam/kintsugi-usb/issues
+**MIT** — see [LICENSE](LICENSE). The repository (scripts, docs, YAML manifests) is MIT-licensed. Bundled third-party binaries retain their own licenses — see [`manifest/THIRD-PARTY-LICENSES.md`](manifest/THIRD-PARTY-LICENSES.md). Model weights and agentic-framework binaries are user-fetched at build- or boot-time and carry their own licenses; the user is responsible for reviewing those before use.
