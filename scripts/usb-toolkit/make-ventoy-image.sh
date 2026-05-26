@@ -31,6 +31,9 @@
 #   --size <GiB>             Total image size. Default: auto (sum of ISOs +
 #                            persistence + 1 GiB slack), minimum 8.
 #   --persistence-size <GiB> Persistence .dat size (default: 32; per #34).
+#   --ollama-models <dir>    Pre-load a staged Ollama store (a dir with blobs/ +
+#                            manifests/) into the persistence at /data/ollama/models
+#                            so the booted Ollama has the models offline.
 #   --label <NAME>           exFAT data-partition label shown to the recipient
 #                            (default: KINTSUGI; relabeled post-install).
 #   --readme <path>          On-drive README copied to the data-partition root
@@ -68,6 +71,8 @@ PERSIST_GIB=32        # #34 default
 VENTOY_BIN="${VENTOY_BIN:-}"
 DATA_LABEL="KINTSUGI"   # end-user-facing exFAT data-partition label (friendly names)
 README_SRC=""           # on-drive README template (auto-resolved from repo config/ if empty)
+OLLAMA_MODELS_SRC=""    # --ollama-models: a staged Ollama store (blobs/ + manifests/) to
+                        # pre-load into the persistence .dat at /data/ollama/models
 DRY_RUN=0
 
 # --- arg parsing -----------------------------------------------------------
@@ -81,6 +86,7 @@ while [ $# -gt 0 ]; do
         --readme)           README_SRC=$2; shift 2 ;;
         --size)             SIZE_GIB=$2; shift 2 ;;
         --persistence-size) PERSIST_GIB=$2; shift 2 ;;
+        --ollama-models)    OLLAMA_MODELS_SRC=$2; shift 2 ;;
         --ventoy-bin)       VENTOY_BIN=$2; shift 2 ;;
         --dry-run)          DRY_RUN=1; shift ;;
         -h|--help)          sed -n '2,40p' "$0" | sed 's/^# \?//'; exit 0 ;;
@@ -107,6 +113,13 @@ done
 # Numeric sanity.
 case "$PERSIST_GIB" in (''|*[!0-9]*) die "--persistence-size must be an integer GiB";; esac
 case "$SIZE_GIB"    in (''|*[!0-9]*) die "--size must be an integer GiB";; esac
+
+# Ollama pre-load store sanity: must be an Ollama model dir (blobs/ + manifests/).
+if [ -n "$OLLAMA_MODELS_SRC" ]; then
+    if [ ! -d "$OLLAMA_MODELS_SRC/blobs" ] || [ ! -d "$OLLAMA_MODELS_SRC/manifests" ]; then
+        die "--ollama-models must be an Ollama store dir containing blobs/ and manifests/: $OLLAMA_MODELS_SRC"
+    fi
+fi
 
 # --- compute layout --------------------------------------------------------
 iso_bytes() { stat -c %s "$1"; }
@@ -245,6 +258,31 @@ else
     warn "CreatePersistentImg.sh not found; creating a raw ext4 .dat directly."
     truncate -s "${PERSIST_GIB}G" "$PERSIST_DAT" || die "persistence truncate failed" 2
     mkfs.ext4 -F -L casper-rw "$PERSIST_DAT" || die "mkfs.ext4 on persistence failed" 2
+fi
+
+# Pre-load Ollama models into the persistence overlay. The .dat is labeled casper-rw,
+# so its filesystem root unions over / on boot — files at <dat>/data/ollama/models
+# appear at /data/ollama/models, which is where OLLAMA_MODELS points (wired in
+# first-boot-setup.sh / start-ai.sh). Models live in the writable layer, never the ISO (ADR-005).
+if [ -n "$OLLAMA_MODELS_SRC" ]; then
+    head1 "Pre-loading Ollama models into persistence (/data/ollama/models)"
+    PMNT=$(mktemp -d)
+    mount -o loop "$PERSIST_DAT" "$PMNT" || die "could not mount persistence .dat for model pre-load" 2
+    mkdir -p "$PMNT/data/ollama/models"
+    if cp -a "$OLLAMA_MODELS_SRC/blobs" "$OLLAMA_MODELS_SRC/manifests" "$PMNT/data/ollama/models/"; then
+        # Match the casper live user (uid/gid 1000) and keep blobs world-readable so the
+        # booted Ollama finds them regardless of which user runs it.
+        chown -R 1000:1000 "$PMNT/data/ollama" 2>/dev/null || true
+        chmod -R a+rX "$PMNT/data/ollama" 2>/dev/null || true
+        local_n=$(find "$PMNT/data/ollama/models/manifests" -type f 2>/dev/null | wc -l)
+        info "  loaded ${local_n} model manifest(s), $(du -sh "$PMNT/data/ollama/models" 2>/dev/null | cut -f1) into persistence"
+    else
+        umount "$PMNT" 2>/dev/null; rmdir "$PMNT" 2>/dev/null
+        die "model copy into persistence failed" 2
+    fi
+    sync
+    umount "$PMNT" || warn "umount of persistence .dat failed"
+    rmdir "$PMNT" 2>/dev/null || true
 fi
 
 head1 "Writing Ventoy persistence plugin (ventoy/ventoy.json)"
