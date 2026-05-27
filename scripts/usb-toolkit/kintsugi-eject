@@ -1,0 +1,91 @@
+#!/bin/bash
+# kintsugi-eject — flush + safely power off removable USB storage in the live
+# session, ALWAYS protecting the Kintsugi boot drive. One-click "remove all" for
+# non-technical operators; also callable per-device. Works offline (airgapped).
+#
+# The Kintsugi boot drive is protected by its partition labels (KINTSUGI / VTOYEFI)
+# and by any partition mounted at a live-medium path — those are never ejected.
+#
+# Usage:
+#   kintsugi-eject            Eject every removable drive except the boot drive
+#   kintsugi-eject /dev/sdX   Eject one specific drive (still refuses the boot drive)
+#   kintsugi-eject --gui      Same as no-arg, with desktop notifications
+#   kintsugi-eject --list     Show removable drives and which would be ejected
+#
+# Exit: 0 ok / 1 nothing to do / 2 refused (boot drive)
+
+set -u
+GUI=0; LIST=0; ONE=""
+for a in "$@"; do
+    case "$a" in
+        --gui) GUI=1 ;;
+        --list) LIST=1 ;;
+        /dev/*) ONE="${a#/dev/}" ;;
+        -h|--help) sed -n '2,18p' "$0" | sed 's/^# \?//'; exit 0 ;;
+    esac
+done
+
+say() {
+    echo "$*"
+    if [ "$GUI" = 1 ] && command -v notify-send >/dev/null 2>&1; then
+        notify-send -i media-eject "Kintsugi — Safe Removal" "$1" 2>/dev/null || true
+    fi
+}
+
+# A disk is the boot drive if any of its partitions is labeled KINTSUGI/VTOYEFI/Ventoy,
+# or is mounted at a known live-medium path. Fail safe: protect on any doubt.
+is_boot_disk() {
+    local disk=$1 p lbl mp
+    for p in $(lsblk -lno NAME "/dev/$disk" 2>/dev/null | tail -n +2); do
+        lbl=$(lsblk -no LABEL "/dev/$p" 2>/dev/null | tr -d '[:space:]')
+        case "$lbl" in KINTSUGI|VTOYEFI|Ventoy|casper-rw) return 0 ;; esac
+        mp=$(lsblk -no MOUNTPOINT "/dev/$p" 2>/dev/null)
+        case "$mp" in /cdrom*|/run/live/*|/isodevice*|/) return 0 ;; esac
+    done
+    return 1
+}
+
+eject_disk() {
+    local disk=$1 p
+    if is_boot_disk "$disk"; then
+        say "Refusing /dev/$disk — that's the Kintsugi boot drive."
+        return 2
+    fi
+    for p in $(lsblk -lno NAME "/dev/$disk" 2>/dev/null | tail -n +2); do
+        udisksctl unmount -b "/dev/$p" >/dev/null 2>&1 || sudo umount "/dev/$p" 2>/dev/null || true
+    done
+    sync
+    if udisksctl power-off -b "/dev/$disk" >/dev/null 2>&1 || sudo udisksctl power-off -b "/dev/$disk" >/dev/null 2>&1; then
+        say "Powered off /dev/$disk — safe to unplug."
+        return 0
+    fi
+    say "Unmounted /dev/$disk (power-off unavailable) — safe to unplug."
+    return 0
+}
+
+# Enumerate removable disks (RM=1, TYPE=disk).
+removable_disks() { lsblk -dno NAME,RM,TYPE 2>/dev/null | awk '$2==1 && $3=="disk"{print $1}'; }
+
+if [ "$LIST" = 1 ]; then
+    printf '%-8s %-10s %-12s %s\n' DEVICE SIZE LABELS ROLE
+    for d in $(removable_disks); do
+        sz=$(lsblk -dno SIZE "/dev/$d" | tr -d ' ')
+        lbls=$(lsblk -lno LABEL "/dev/$d" 2>/dev/null | grep -v '^$' | paste -sd, -)
+        role=$(is_boot_disk "$d" && echo "BOOT (protected)" || echo "ejectable")
+        printf '%-8s %-10s %-12s %s\n' "$d" "$sz" "${lbls:-—}" "$role"
+    done
+    exit 0
+fi
+
+rc=1
+if [ -n "$ONE" ]; then
+    eject_disk "$ONE"; rc=$?
+else
+    n=0
+    for d in $(removable_disks); do
+        is_boot_disk "$d" && continue
+        eject_disk "$d" && n=$((n+1))
+    done
+    if [ "$n" -eq 0 ]; then say "No removable drives to remove (boot drive protected)."; rc=1; else rc=0; fi
+fi
+exit "$rc"

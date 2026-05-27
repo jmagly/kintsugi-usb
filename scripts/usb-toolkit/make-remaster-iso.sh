@@ -59,7 +59,7 @@ htop iotop lsof dmidecode lshw pciutils usbutils \
 vim nano tmux jq git pv tree ncdu p7zip-full"
 
 # Runtime scripts injected into the live filesystem's /usr/local/bin.
-RUNTIME_SCRIPTS="start-ai.sh usb-test-harness.sh first-boot-setup.sh kintsugi-models kintsugi-frameworks kintsugi-install-hermes"
+RUNTIME_SCRIPTS="start-ai.sh usb-test-harness.sh first-boot-setup.sh kintsugi-models kintsugi-frameworks kintsugi-install-hermes kintsugi-eject"
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -95,6 +95,18 @@ for s in $RUNTIME_SCRIPTS; do
     fi
 done
 
+# Always provision the removable-media desktop UX (automount + easy/safe eject).
+# Core to the drive's purpose (rescue + airgapped, non-technical operators), so it
+# runs unconditionally — not behind a flag. Same chroot-exec mechanism as the
+# agentic/AI provisioners below.
+DESKTOP_SRC="$SCRIPTS_DIR/desktop-provision.sh"
+if [ -r "$DESKTOP_SRC" ]; then
+    ACTIONS+=( --cp "$DESKTOP_SRC" "\$LAYERS[0]/tmp/desktop-provision.sh" )
+    ACTIONS+=( --python "base = ctxt.edit_squashfs(get_squash_names(ctxt)[0]); ctxt.run(['chroot', base, 'bash', '/tmp/desktop-provision.sh'])" )
+else
+    info "  (skip: desktop-provision.sh not found in $SCRIPTS_DIR)"
+fi
+
 # Optionally pre-install the agentic CLI platforms inside the squashfs chroot.
 if [ "$WITH_AGENTIC" = "1" ]; then
     AGENTIC_SRC="$SCRIPTS_DIR/agentic-provision.sh"
@@ -120,6 +132,7 @@ info "  Output:       $OUTPUT"
 info "  livefs-edit:  $LIVEFS_EDIT"
 info "  Packages:     $(echo "$PACKAGES" | wc -w) rescue packages"
 info "  Scripts:      $RUNTIME_SCRIPTS"
+info "  Desktop:      udiskie automount + tray eject, gnome-disks, udisks polkit, 'Safely Remove' launcher (always)"
 if [ "$WITH_AGENTIC" = "1" ]; then info "  Agentic:      claude-code, codex, opencode, copilot, openclaw, omnius, aider (pre-installed in-chroot)"; fi
 if [ "$WITH_AI_STACK" = "1" ]; then info "  AI core:      Ollama + mikefarah yq (offline LLM runtime; models pulled post-flash) [#43]"; fi
 info ""
