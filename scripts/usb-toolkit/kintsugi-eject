@@ -71,7 +71,7 @@ if [ "$LIST" = 1 ]; then
     for d in $(removable_disks); do
         sz=$(lsblk -dno SIZE "/dev/$d" | tr -d ' ')
         lbls=$(lsblk -lno LABEL "/dev/$d" 2>/dev/null | grep -v '^$' | paste -sd, -)
-        role=$(is_boot_disk "$d" && echo "BOOT (protected)" || echo "ejectable")
+        if is_boot_disk "$d"; then role="BOOT (protected)"; else role="ejectable"; fi
         printf '%-8s %-10s %-12s %s\n' "$d" "$sz" "${lbls:-—}" "$role"
     done
     exit 0

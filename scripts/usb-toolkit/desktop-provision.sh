@@ -29,10 +29,13 @@ log() { echo "[$(date -u +%H:%M:%S)] $*" | tee -a "$LOG" >&2; }
 log "=== Kintsugi desktop / removable-media provisioning ==="
 
 apt-get update >>"$LOG" 2>&1 || true
-apt-get install -y --no-install-recommends \
+if apt-get install -y --no-install-recommends \
     udiskie udisks2 gvfs gvfs-backends gnome-disk-utility xfce4-notifyd \
-    thunar-volman eject exfatprogs ntfs-3g dosfstools libnotify-bin >>"$LOG" 2>&1 \
-    && log "  ✓ packages installed" || log "  ✗ some packages failed (see log)"
+    thunar-volman eject exfatprogs ntfs-3g dosfstools libnotify-bin >>"$LOG" 2>&1; then
+    log "  ✓ packages installed"
+else
+    log "  ✗ some packages failed (see log)"
+fi
 
 # 1. Autostart udiskie for every desktop session: automount + tray eject + notify.
 mkdir -p /etc/xdg/autostart
