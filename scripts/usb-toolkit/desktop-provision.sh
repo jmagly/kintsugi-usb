@@ -29,26 +29,63 @@ log() { echo "[$(date -u +%H:%M:%S)] $*" | tee -a "$LOG" >&2; }
 log "=== Kintsugi desktop / removable-media provisioning ==="
 
 apt-get update >>"$LOG" 2>&1 || true
+# Core removable-media stack — these MUST succeed for the feature to work.
 if apt-get install -y --no-install-recommends \
     udiskie udisks2 gvfs gvfs-backends gnome-disk-utility xfce4-notifyd \
     thunar-volman eject exfatprogs ntfs-3g dosfstools libnotify-bin >>"$LOG" 2>&1; then
-    log "  ✓ packages installed"
+    log "  ✓ core packages installed"
 else
-    log "  ✗ some packages failed (see log)"
+    log "  ✗ some core packages failed (see log)"
 fi
 
-# 1. Autostart udiskie for every desktop session: automount + tray eject + notify.
+# Optional GI typelibs for udiskie's --notify / --appindicator UI. These are only
+# *Recommends* of udiskie, so --no-install-recommends skips them; without them,
+# `udiskie --notify --appindicator` raises ImportError and exits before mounting
+# anything. Install them best-effort (separate call so a name miss can't break the
+# core stack); the autostart wrapper also probes them, so automount works either way.
+if apt-get install -y --no-install-recommends \
+    gir1.2-notify-0.7 gir1.2-ayatanaappindicator3-0.1 gobject-introspection >>"$LOG" 2>&1; then
+    log "  ✓ GI typelibs installed (Notify + AyatanaAppIndicator → notifications + tray)"
+else
+    log "  ~ GI typelibs unavailable — automount still works; notify/tray degrade gracefully"
+fi
+
+# 1. Autostart udiskie for every desktop session via a defensive wrapper.
+#
+# Why a wrapper instead of `Exec=udiskie --automount --notify --tray --appindicator`:
+# if the Notify / AppIndicator GI typelibs are ever missing (e.g. a future
+# --no-install-recommends regression), passing those flags makes udiskie raise
+# ImportError and exit BEFORE mounting anything — silently breaking automount, the
+# whole point of this feature. The wrapper probes each optional typelib and only
+# adds the flag when it can actually be imported, so automount is guaranteed and
+# the richer UI (notifications, tray/appindicator) layers on when available.
+cat > /usr/local/bin/kintsugi-udiskie-start <<'WRAP'
+#!/bin/bash
+# kintsugi-udiskie-start — launch udiskie with the richest UI this session supports,
+# but ALWAYS guarantee automount (never let an optional GI typelib kill mounting).
+have() { python3 -c "import gi; gi.require_version('$1','$2')" 2>/dev/null; }
+opts=(--automount)
+have Notify 0.7 && opts+=(--notify)
+if have AyatanaAppIndicator3 0.1 || have AppIndicator3 0.1; then
+    opts+=(--tray --appindicator)     # status-notifier tray (modern panels)
+else
+    opts+=(--tray)                    # GtkStatusIcon fallback (needs only Gtk-3)
+fi
+exec udiskie "${opts[@]}"
+WRAP
+chmod +x /usr/local/bin/kintsugi-udiskie-start
+
 mkdir -p /etc/xdg/autostart
 cat > /etc/xdg/autostart/kintsugi-udiskie.desktop <<'DESK'
 [Desktop Entry]
 Type=Application
 Name=Kintsugi Removable Media
 Comment=Auto-mount USB/removable storage; tray menu to safely eject
-Exec=udiskie --automount --notify --tray --appindicator
+Exec=kintsugi-udiskie-start
 X-GNOME-Autostart-enabled=true
 NoDisplay=true
 DESK
-log "  ✓ udiskie autostart (automount + tray eject + notify)"
+log "  ✓ udiskie autostart via kintsugi-udiskie-start (automount guaranteed; notify/tray when available)"
 
 # 2. XFCE Thunar auto-media defaults (alongside udiskie) for the live user.
 mkdir -p /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml
