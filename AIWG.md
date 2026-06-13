@@ -9,7 +9,7 @@ This file provides guidance to Claude Code when working with this codebase.
 
 **Kintsugi USB** — build, distribution, and recovery tooling for an AI-assisted rescue boot USB.
 
-The drive is a Ventoy-based multi-boot USB built on top of Ubuntu 24.04 Desktop (with persistence) that ships with:
+The drive is a Ventoy-based multi-boot USB built on top of Xubuntu Minimal 24.04.4 (XFCE, with persistence) that ships with:
 
 - Rescue ISOs (SystemRescue, Clonezilla, GParted Live, Memtest86+)
 - Offline LLM stack (Ollama + `llama.cpp`); model weights are user-loaded into persistence (`/data/ollama/models`), never baked into the read-only image (ADR-005)
@@ -23,9 +23,9 @@ This repo is the public distribution point. The drive carries a snapshot of this
 
 ## Tech Stack
 
-- **Boot**: Ventoy multi-boot (UEFI + BIOS); inner ISO is GRUB+isolinux (preserved from the stock Ubuntu image)
-- **Base OS**: Ubuntu 24.04 LTS (Xubuntu minimal, persistent via Ventoy)
-- **Build**: remaster the stock Ubuntu 24.04 ISO via `livefs-edit` (squashfs repacked with xz) — [ADR-008](.aiwg/architecture/adr-008-build-tooling-remaster-stock-iso.md), supersedes the ADR-007 live-build approach
+- **Boot**: Ventoy multi-boot (UEFI + BIOS); inner ISO is GRUB+isolinux (preserved from the stock Xubuntu image)
+- **Base OS**: Xubuntu Minimal 24.04.4 LTS (XFCE), persistent via Ventoy
+- **Build**: remaster the stock Xubuntu Minimal 24.04 ISO via `livefs-edit` (squashfs repacked with xz) — [ADR-008](.aiwg/architecture/adr-008-build-tooling-remaster-stock-iso.md), supersedes the ADR-007 live-build approach
 - **AI**: Ollama + `llama.cpp` (offline runtime); agentic CLIs (claude-code/codex/opencode/copilot/openclaw/omnius/aider)
 - **Imaging**: Ventoy installer, `dd`, `zstd`, `sha256sum`
 - **Scripting**: Bash · **Docs**: Markdown
@@ -124,7 +124,7 @@ This repo is **public**. Before committing:
 
 The `kintsugi-build` wizard auto-chains steps 1–3 (ADR-008 remaster pipeline); the rest are per-build operations:
 
-1. **Build** the custom ISO — `scripts/usb-toolkit/make-remaster-iso.sh` remasters the stock Ubuntu 24.04 ISO (rescue tools + agentic CLIs + offline AI stack).
+1. **Build** the custom ISO — `scripts/usb-toolkit/make-remaster-iso.sh` remasters the stock Xubuntu Minimal 24.04 ISO (rescue tools + agentic CLIs + offline AI stack).
 2. **Assemble** the Ventoy `.img` — `scripts/usb-toolkit/make-ventoy-image.sh` (bootloader + persistence; optional pre-loaded models via `--ollama-models`).
 3. **Package** into a distributable archive — `scripts/create-image.sh` → `<name>.img.zst` + `.sha256`.
 4. **Publish** as a Gitea release — `scripts/publish-release.sh` (sha256-verified; minisign signing arrives in v1.1, #19).

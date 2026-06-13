@@ -25,3 +25,4 @@
 ## [2026-05-24 20:45] update | reconcile docs to wizard+Ventoy flow; mark doc-reconciliation done in roadmap
 ## [2026-06-13 14:39] create | i386 runtime baked into remaster for legacy vendor unlockers (IronKey) — legacy-tools-provision.sh + docs/legacy-device-unlock.md (#45, commit 28a4a74)
 ## [2026-06-13 16:57] update | re-imaged /dev/sdd (serial 05250930) with kintsugi-v2026.5.0-r2 (offline IronKey i386 runtime #45 + latest tools); build fixes d798144
+## [2026-06-13 17:55] update | docs OS-identity accuracy: README + CLAUDE.md/AIWG.md now state Xubuntu Minimal 24.04.4 (XFCE), not "Ubuntu Desktop/full desktop" (matches flashed base). Stale architecture narrative deferred.

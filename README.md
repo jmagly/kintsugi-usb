@@ -4,7 +4,7 @@
 
 **Rescue your fleet. Honor the break.**
 
-AI-assisted rescue boot media for broken systems. A Ventoy multi-boot USB on Ubuntu 24.04 (with persistence) carrying rescue ISOs, an **offline LLM stack** (Ollama + llama.cpp), **seven pre-installed agentic CLIs**, and host-specific recovery runbooks ready to hand to an AI agent — built from a fresh clone with one command.
+AI-assisted rescue boot media for broken systems. A Ventoy multi-boot USB on Xubuntu Minimal 24.04 (XFCE, with persistence) carrying rescue ISOs, an **offline LLM stack** (Ollama + llama.cpp), **seven pre-installed agentic CLIs**, and host-specific recovery runbooks ready to hand to an AI agent — built from a fresh clone with one command.
 
 ```bash
 ./scripts/kintsugi-build        # fresh clone + blank USB → a flashable, personalized .img.zst
@@ -13,7 +13,7 @@ AI-assisted rescue boot media for broken systems. A Ventoy multi-boot USB on Ubu
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
 [![Version](https://img.shields.io/badge/version-2026.5.0--pre-orange?style=flat-square)](.aiwg/planning/roadmap.md)
 [![Boot](https://img.shields.io/badge/boot-UEFI%20%2B%20BIOS-brightgreen?style=flat-square)](#whats-on-it)
-[![Base](https://img.shields.io/badge/base-Ubuntu%2024.04-E95420?style=flat-square&logo=ubuntu&logoColor=white)](#whats-on-it)
+[![Base](https://img.shields.io/badge/base-Xubuntu%20Minimal%2024.04-0E63B6?style=flat-square&logo=ubuntu&logoColor=white)](#whats-on-it)
 [![Offline AI](https://img.shields.io/badge/offline%20AI-Ollama%20%2B%20llama.cpp-blueviolet?style=flat-square)](#whats-on-it)
 
 [**What's on it**](#whats-on-it) · [**Quick Start**](#quick-start-for-recipients) · [**Build Your Own**](#build-your-own) · [**Documentation**](#documentation) · [**Issues**](#issues)
@@ -24,14 +24,14 @@ AI-assisted rescue boot media for broken systems. A Ventoy multi-boot USB on Ubu
 
 ## What Kintsugi USB Is
 
-A "final level of recovery" for home-lab and small-fleet operators: **one USB that works whether the internet is up or down, whether you know what's broken or not, and whether the person holding it built the fleet or not.** It boots almost any UEFI or BIOS machine into a full Ubuntu desktop with rescue tooling and a local AI assistant that can read host-specific runbooks and help drive the repair.
+A "final level of recovery" for home-lab and small-fleet operators: **one USB that works whether the internet is up or down, whether you know what's broken or not, and whether the person holding it built the fleet or not.** It boots almost any UEFI or BIOS machine into a lightweight Xubuntu (XFCE) desktop with rescue tooling and a local AI assistant that can read host-specific runbooks and help drive the repair.
 
-This repo is also the **toolkit** that produces the drive: a wizard remasters a stock Ubuntu ISO into a personalized, flashable image. Fork it to roll your own Kintsugi-like USB with your own model set, agentic tools, runbooks, and (from v1.1) signing key.
+This repo is also the **toolkit** that produces the drive: a wizard remasters a stock Xubuntu Minimal ISO into a personalized, flashable image. Fork it to roll your own Kintsugi-like USB with your own model set, agentic tools, runbooks, and (from v1.1) signing key.
 
 ## What's on it
 
 - **Ventoy multi-boot loader** — UEFI + BIOS; pick your ISO at boot, with persistence so state survives reboots.
-- **Ubuntu 24.04 Desktop** (Xubuntu base) — full desktop OS for hands-on rescue.
+- **Xubuntu Minimal 24.04.4 (XFCE)** — lightweight desktop OS for hands-on rescue.
 - **Rescue ISOs** — SystemRescue, Clonezilla, GParted Live, Memtest86+ *(catalog in progress, [#35](https://git.integrolabs.net/roctinam/kintsugi-usb/issues/35))*.
 - **Legacy encrypted-drive unlock** — the 32-bit (`i386`) runtime needed by legacy vendor unlockers is baked in, so older Imation/IronKey secure USB drives unlock **offline, out of the box**. See [`docs/legacy-device-unlock.md`](docs/legacy-device-unlock.md).
 - **Offline AI stack** — Ollama (with `llama.cpp` available) as a local runtime, pre-installed and wired to a persistence-backed model store (`/data/ollama/models`) so models pulled in the field survive reboots. No model weights ship in the read-only image by default ([ADR-005](.aiwg/architecture/adr-005-toolkit-scope-and-user-driven-models.md)); the operator loads their own via `kintsugi-models` / `ollama pull`, or pre-loads them into the drive's persistence at build time. Start from [`manifest/models-recommended.yaml`](manifest/models-recommended.yaml).
@@ -41,7 +41,7 @@ This repo is also the **toolkit** that produces the drive: a wizard remasters a 
 
 ## How it's built
 
-`kintsugi-build` **remasters the stock Ubuntu 24.04 ISO** ([ADR-008](.aiwg/architecture/adr-008-build-tooling-remaster-stock-iso.md)) — starting from a known-good UEFI+BIOS-bootable image and injecting the rescue tools, agentic CLIs, and offline AI stack into the squashfs — then assembles a Ventoy disk image with persistence and packages a distributable `.img.zst`. The whole pipeline runs unattended from one command.
+`kintsugi-build` **remasters the stock Xubuntu Minimal 24.04 ISO** ([ADR-008](.aiwg/architecture/adr-008-build-tooling-remaster-stock-iso.md)) — starting from a known-good UEFI+BIOS-bootable image and injecting the rescue tools, agentic CLIs, and offline AI stack into the squashfs — then assembles a Ventoy disk image with persistence and packages a distributable `.img.zst`. The whole pipeline runs unattended from one command.
 
 ## Quick Start for recipients
 
