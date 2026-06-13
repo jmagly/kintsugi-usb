@@ -139,6 +139,45 @@ if [ "$WITH_AI_STACK" = "1" ]; then
     ACTIONS+=( --python "base = ctxt.edit_squashfs(get_squash_names(ctxt)[0]); ctxt.run(['chroot', base, 'bash', '/tmp/ai-stack-provision.sh'])" )
 fi
 
+# Pre-repack chroot-process reaper (MUST be the last action). livefs-edit mounts a
+# fresh devtmpfs at <chroot>/dev and, at repack, umounts the dev/pts/proc/sys it set
+# up (context.py add_sys_mounts). If a provisioner's apt/postinst left a DAEMON
+# running inside the chroot (e.g. dbus/gvfsd/udisksd spawned by the desktop stack),
+# that process keeps <chroot>/dev open and livefs's `umount <chroot>/dev` fails
+# "target is busy", aborting the repack — no ISO (observed on noble with the full
+# agentic+AI stack; there are NO stray /dev submounts — it's a live process).
+# This host-side action runs just before livefs's _pre_repack hook. It (a) lazy-
+# unmounts any stray submount strictly under <chroot>/dev (keeping livefs's /dev/pts),
+# then (b) TERM/KILLs every process still chrooted into the build — selected precisely
+# by /proc/PID/root pointing into the chroot, so HOST processes (root=/) are never
+# touched. It logs each reaped process so the offending daemon is identifiable.
+ACTIONS+=( --python 'import subprocess, os, time
+b = ctxt.edit_squashfs(get_squash_names(ctxt)[0])
+mounts = subprocess.run(["findmnt", "-rno", "TARGET"], capture_output=True, text=True).stdout.split()
+for m in sorted([x for x in mounts if x.startswith(b + "/dev/") and x != b + "/dev/pts"], reverse=True):
+    print("kintsugi pre-repack: lazy-umount stray submount", m)
+    subprocess.run(["umount", "-l", m])
+me = str(os.getpid())
+def chrooted(pid):
+    try:
+        return os.readlink("/proc/%s/root" % pid).startswith(b)
+    except OSError:
+        return False
+for sig in ("-TERM", "-KILL"):
+    hit = False
+    for pid in os.listdir("/proc"):
+        if not pid.isdigit() or pid == me or not chrooted(pid):
+            continue
+        hit = True
+        try:
+            cmd = open("/proc/%s/cmdline" % pid).read().replace(chr(0), " ").strip()
+        except OSError:
+            cmd = "?"
+        print("kintsugi pre-repack: kill %s chrooted pid=%s cmd=%s" % (sig, pid, cmd))
+        subprocess.run(["kill", sig, pid])
+    if hit and sig == "-TERM":
+        time.sleep(2)' )
+
 head1 "make-remaster-iso v${VERSION}"
 info "  Base ISO:     $BASE ($(du -h "$BASE" | cut -f1))"
 info "  Output:       $OUTPUT"

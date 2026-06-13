@@ -68,14 +68,24 @@ log "installing Ollama (version=${OLLAMA_VERSION:-latest/unpinned}) ..."
 INSTALL_SH=$(mktemp --suffix=.sh)
 if curl -fsSL --max-time 60 https://ollama.com/install.sh -o "$INSTALL_SH" 2>>"$LOG"; then
     GOT_SHA=$(sha256sum "$INSTALL_SH" | awk '{print $1}')
+    # Build-chroot guard: shim `systemctl` to a no-op for the Ollama install + disable.
+    # Upstream install.sh enables AND STARTS ollama.service when it detects systemd —
+    # and the build chroot sees the host's /run/systemd through bind mounts, so it
+    # tries. A started `ollama serve` (whose root is the chroot) holds the chroot's
+    # /dev busy and breaks the squashfs repack ("umount .../minimal/dev: target is
+    # busy"). The shim also keeps the real systemctl from touching the HOST's
+    # ollama.service. The image ships Ollama installed-but-stopped + not enabled;
+    # start-ai.sh launches it on demand at runtime (ADR-005 §D2).
+    SHIM_DIR=$(mktemp -d)
+    printf '#!/bin/sh\nexit 0\n' > "$SHIM_DIR/systemctl"; chmod +x "$SHIM_DIR/systemctl"
     if [ "$GOT_SHA" != "$OLLAMA_INSTALLER_SHA256" ]; then
         log "  ✗ Ollama installer sha256 MISMATCH — refusing to run (supply-chain guard #40)"
         log "      expected: $OLLAMA_INSTALLER_SHA256"
         log "      got:      $GOT_SHA"
         log "      Review the new upstream installer, then update the pin."
-    elif OLLAMA_VERSION="$OLLAMA_VERSION" bash "$INSTALL_SH" >>"$LOG" 2>&1; then
-        # Leave the service DISABLED — start-ai.sh decides when Ollama runs.
-        systemctl disable ollama.service >>"$LOG" 2>&1 || true
+    elif PATH="$SHIM_DIR:$PATH" OLLAMA_VERSION="$OLLAMA_VERSION" bash "$INSTALL_SH" >>"$LOG" 2>&1; then
+        # enable/start were no-ops via the shim; assert not-enabled (also shimmed).
+        PATH="$SHIM_DIR:$PATH" systemctl disable ollama.service >>"$LOG" 2>&1 || true
         if command -v ollama >/dev/null 2>&1; then
             record "ollama ${OLLAMA_VERSION}"
             log "  ✓ ollama: $(ollama --version 2>/dev/null | head -1 || echo installed)"
@@ -85,6 +95,7 @@ if curl -fsSL --max-time 60 https://ollama.com/install.sh -o "$INSTALL_SH" 2>>"$
     else
         log "  ✗ Ollama install script failed (continuing without it)"
     fi
+    rm -rf "$SHIM_DIR"
 else
     log "  ✗ could not fetch Ollama installer (no network at build time?)"
 fi
