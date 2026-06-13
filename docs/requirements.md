@@ -1,4 +1,4 @@
-# Requirements Specification: ML-Augmented Boot & Support USB
+# Requirements Specification: Kintsugi USB
 
 **Project**: Kintsugi USB (formerly USB-TOOLKIT)
 **Version**: 1.0 (amended 2026-04-20 per ADR-005 — see banner below)
@@ -35,12 +35,12 @@
 | FR-1.5 | Secure Boot enrollment works via MOK manager on first boot | HIGH |
 | FR-1.6 | Boot menu includes Memtest86+ as standalone entry | MEDIUM |
 
-### FR-2: Custom Ubuntu Environment
+### FR-2: Custom Xubuntu Environment
 
 | ID | Requirement | Priority |
 |----|-------------|----------|
-| FR-2.1 | Custom ISO boots to functional shell with all tools pre-installed | CRITICAL |
-| FR-2.2 | Lightweight desktop (xfce4) available via `startx` | MEDIUM |
+| FR-2.1 | Custom ISO boots to a functional XFCE desktop + shell with all tools pre-installed | CRITICAL |
+| FR-2.2 | XFCE desktop session present at boot (Xubuntu Minimal 24.04.4 base — no separate `startx` step) | MEDIUM |
 | FR-2.3 | All rescue tool packages present at first boot (no apt install needed) | CRITICAL |
 | FR-2.4 | SSH server enabled by default with key-based auth | HIGH |
 | FR-2.5 | Network auto-configured via DHCP (NetworkManager or netplan) | HIGH |
@@ -62,19 +62,19 @@ Amended 2026-04-21 per ADR-005 + ADR-006. See `.aiwg/architecture/adr-005-toolki
 
 | ID | Requirement | Priority |
 |----|-------------|----------|
-| FR-4.1 | llama.cpp (llama-cli + llama-server) binary present at /usr/local/bin/ or /tools/bin/ | CRITICAL |
-| FR-4.2 | Ollama runtime present and reachable on :11434 post-boot (start-ai.sh manages lifecycle) | HIGH |
-| FR-4.3 | Dual-runtime support — both :8080 (llama-server) and :11434 (ollama) are simultaneously available | HIGH |
+| FR-4.1 | Ollama runtime present (offline OpenAI-compatible API on :11434); ships stopped, `start-ai` manages lifecycle | CRITICAL |
+| FR-4.2 | `llama.cpp` (llama-cli/llama-server) usable if present — optional secondary runtime, not required | LOW |
+| FR-4.3 | Ollama is the primary offline runtime; `llama.cpp` coexists only if present (no required dual-runtime) | LOW |
 | FR-4.4 | start-ai.sh reads `manifest/models-recommended.yaml` (at /opt/kintsugi-usb/manifest/) + `/data/models/user/models.yaml` (if present); user entries shadow recommended on slug collision | HIGH |
 | FR-4.5 | NO model weights are bundled in the distributed image (ADR-005 user-driven loading) | CRITICAL |
 | FR-4.6 | kintsugi-models CLI present at /usr/local/bin/kintsugi-models; subcommands list/add/pull/remove/verify | HIGH |
 | FR-4.7 | kintsugi-frameworks CLI present at /usr/local/bin/kintsugi-frameworks | HIGH |
 | FR-4.8 | start-ai.sh --status reports health of both runtimes + manifest discovery + env status | MEDIUM |
-| FR-4.9 | start-ai.sh auto-selects a GGUF based on available RAM (prefers 9b-slug when ≥16 GB, else 4b-slug) from the union-manifest | MEDIUM |
-| FR-4.10 | Aider can be configured to use either llama-server (:8080) or Ollama (:11434) via OPENAI_API_BASE | MEDIUM |
+| FR-4.9 | (RETIRED) RAM-based GGUF auto-select — superseded by user-driven model loading (ADR-005); `start-ai` surfaces the user-loaded Ollama models instead | — |
+| FR-4.10 | Aider can be pointed at the local Ollama OpenAI-compatible endpoint (:11434) via OPENAI_API_BASE | MEDIUM |
 | FR-4.11 | Cloud CLIs (claude, codex, aider) are installable via kintsugi-frameworks install; auth is POST-FLASH user responsibility | HIGH |
 | FR-4.12 | mikefarah/yq present at /usr/local/bin/yq for manifest parsing (distinct from apt python-yq) | CRITICAL |
-| FR-4.13 | API keys are NEVER baked into the image; loaded at runtime from /root/.config/ai-keys.env or ~/.config/ai-keys.env with mode 600 | CRITICAL |
+| FR-4.13 | Agentic-CLI auth / API keys are NEVER baked into the image; provided post-flash per CLI sign-in (or env, mode 600), stored only in persistence | CRITICAL |
 
 #### Obsolete / superseded
 
@@ -88,7 +88,7 @@ Amended 2026-04-21 per ADR-005 + ADR-006. See `.aiwg/architecture/adr-005-toolki
 
 | ID | Requirement | Priority |
 |----|-------------|----------|
-| FR-5.1 | Changes to custom Ubuntu environment persist across reboots | HIGH |
+| FR-5.1 | Changes to the Kintsugi (Xubuntu) live environment persist across reboots | HIGH |
 | FR-5.2 | Persistence uses Ventoy persistence plugin with .dat file | HIGH |
 | FR-5.3 | Persistence overlay is at least 10GB | HIGH |
 | FR-5.4 | Installed packages persist (apt install survives reboot) | HIGH |
@@ -118,15 +118,20 @@ Amended 2026-04-21 per ADR-005 + ADR-006. See `.aiwg/architecture/adr-005-toolki
 | FR-7.3 | `/etc/hosts` entries for fleet hostnames (10.0.0.x) | MEDIUM |
 | FR-7.4 | Fleet network topology reference accessible from USB | LOW |
 
-### FR-8: Supplementary ISOs
+### FR-8: Supplementary Rescue ISOs (optional, operator-added)
+
+Ventoy boots any bootable `.iso` dropped on the data partition. The default
+rescue catalog is pinned in `manifest/rescue-isos-recommended.yaml`
+([#35](https://git.integrolabs.net/roctinam/kintsugi-usb/issues/35)); these are
+not bundled in the base image and are added per build.
 
 | ID | Requirement | Priority |
 |----|-------------|----------|
-| FR-8.1 | SystemRescue ISO boots from Ventoy menu | HIGH |
-| FR-8.2 | Clonezilla ISO boots from Ventoy menu | MEDIUM |
-| FR-8.3 | GParted Live ISO boots from Ventoy menu | MEDIUM |
-| FR-8.4 | Hiren's BootCD PE boots from Ventoy menu | MEDIUM |
-| FR-8.5 | Ubuntu 24.04 Desktop installer ISO boots from Ventoy menu | MEDIUM |
+| FR-8.1 | SystemRescue ISO boots from Ventoy menu (when added) | MEDIUM |
+| FR-8.2 | Clonezilla ISO boots from Ventoy menu (when added) | MEDIUM |
+| FR-8.3 | GParted Live ISO boots from Ventoy menu (when added) | MEDIUM |
+| FR-8.4 | Memtest86+ boots from Ventoy menu (when added) | LOW |
+| FR-8.5 | Any other bootable ISO the operator adds (e.g. an OS installer) appears in the menu — Ventoy is format-agnostic | LOW |
 
 ### FR-9: Data Partition
 
@@ -145,9 +150,9 @@ Amended 2026-04-21 per ADR-005 + ADR-006. See `.aiwg/architecture/adr-005-toolki
 | ID | Requirement | Target |
 |----|-------------|--------|
 | NFR-1.1 | Boot to shell prompt | < 60 seconds |
-| NFR-1.2 | llama-server ready for first query | < 90 seconds from script start |
-| NFR-1.3 | Phi-4-mini inference speed | > 15 tokens/second on i7-12700H |
-| NFR-1.4 | Qwen2.5-Coder 7B inference speed | > 8 tokens/second on i7-12700H |
+| NFR-1.2 | Ollama ready for first query (model already pulled) | < 90 seconds from `start-ai` |
+| NFR-1.3 | Small user-loaded model (≈4B class) inference speed | > 15 tokens/second on i7-12700H |
+| NFR-1.4 | Mid user-loaded model (≈7–9B class) inference speed | > 8 tokens/second on i7-12700H |
 
 ### NFR-2: Storage
 
@@ -186,8 +191,8 @@ Amended 2026-04-21 per ADR-005 + ADR-006. See `.aiwg/architecture/adr-005-toolki
 | ID | Requirement | Target |
 |----|-------------|--------|
 | NFR-6.1 | Add new ISO | Copy file to USB, appears in menu |
-| NFR-6.2 | Update model | Replace .gguf file on USB |
-| NFR-6.3 | Update AI tools | Replace binary on USB |
+| NFR-6.2 | Update model | `kintsugi-models pull` / `ollama pull` into persistence (post-flash) |
+| NFR-6.3 | Update AI tools | Rebuild the Kintsugi ISO (tools live in the squashfs) |
 | NFR-6.4 | Rebuild custom ISO | Documented remaster procedure (ADR-008) |
 
 ---
@@ -203,8 +208,8 @@ Amended 2026-04-21 per ADR-005 + ADR-006. See `.aiwg/architecture/adr-005-toolki
 2. Enter BIOS/UEFI boot menu (F12/F2)
 3. Select USB device
 4. Ventoy menu appears with ISO list
-5. Select "Custom Ubuntu ML-Support" or "SystemRescue"
-6. Environment boots with all tools ready
+5. Select "Kintsugi" (or a rescue ISO, if added)
+6. Environment boots (Xubuntu / XFCE live session) with all tools ready
 7. Mount target system's root filesystem
 8. Chroot into target and perform repairs
 
@@ -213,8 +218,8 @@ Amended 2026-04-21 per ADR-005 + ADR-006. See `.aiwg/architecture/adr-005-toolki
 **Actor**: Operator
 **Precondition**: Host booted from USB, internet available
 **Steps**:
-1. Boot into custom Ubuntu from USB
-2. `start-ai.sh` detects internet, reports Claude Code available
+1. Boot the Kintsugi (Xubuntu) live session from USB
+2. Sign in to Claude Code (post-flash); `start-ai` reports available tools
 3. Mount target system's `/var/log/`
 4. `claude "analyze these syslog entries for the root cause of the boot failure" < /mnt/target/var/log/syslog`
 5. Claude Code provides diagnosis and recommended fix
@@ -225,9 +230,9 @@ Amended 2026-04-21 per ADR-005 + ADR-006. See `.aiwg/architecture/adr-005-toolki
 **Actor**: Operator
 **Precondition**: Host booted from USB, no internet
 **Steps**:
-1. Boot into custom Ubuntu from USB
-2. `start-ai.sh` detects no internet, starts llama-server with Phi-4-mini
-3. Operator describes problem to Aider or llama-cli
+1. Boot the Kintsugi (Xubuntu) live session from USB
+2. `start-ai` launches Ollama with a user-loaded model (pulled post-flash)
+3. Operator describes the problem to Aider or `ollama run <model>`
 4. Local model generates a diagnostic script
 5. Operator reviews and executes the script
 6. Script output helps identify the issue
@@ -247,11 +252,12 @@ Amended 2026-04-21 per ADR-005 + ADR-006. See `.aiwg/architecture/adr-005-toolki
 ### UC-5: Fresh OS Installation
 
 **Actor**: Operator
-**Precondition**: Need to install Ubuntu on new or wiped system
+**Precondition**: Need to install an OS on a new or wiped system, and the operator
+has added an installer ISO to the drive (Ventoy boots any ISO; one is not bundled).
 **Steps**:
-1. Boot Ubuntu Desktop installer ISO from Ventoy menu
-2. Proceed through standard Ubuntu installation
-3. Post-install: boot from USB again into custom environment
+1. Boot the operator-added installer ISO from the Ventoy menu
+2. Proceed through the standard OS installation
+3. Post-install: boot from USB again into the Kintsugi live session
 4. Run fleet setup scripts to configure the new host
 
 ---

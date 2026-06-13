@@ -1,9 +1,8 @@
-# Test Strategy: ML-Augmented Boot & Support USB
+# Test Strategy: Kintsugi USB
 
-**Project**: USB-TOOLKIT
-**Version**: 1.0
-**Date**: 2026-03-03
-**Phase**: Elaboration
+**Project**: Kintsugi USB
+**Version**: 1.1 (reconciled 2026-06-13 to the current ADR-008 design)
+**Phase**: Construction
 
 ---
 
@@ -65,11 +64,11 @@ qemu-system-x86_64 \
 **Steps**:
 1. Boot QEMU with OVMF firmware pointing to USB device
 2. Observe Ventoy menu appears
-3. Select custom Ubuntu ISO
-4. Verify shell prompt reached
+3. Select the Kintsugi ISO
+4. Verify the Xubuntu (XFCE) live session / shell prompt reached
 
-**Expected**: Boot to shell in < 90 seconds
-**Pass criteria**: Shell prompt with `root@ubuntu:~#`
+**Expected**: Boot to desktop/shell in < 90 seconds
+**Pass criteria**: Xubuntu live session reaches a usable shell
 
 ### TC-2: Legacy BIOS Boot (QEMU)
 
@@ -77,8 +76,8 @@ qemu-system-x86_64 \
 **Steps**:
 1. Boot QEMU without OVMF (default SeaBIOS)
 2. Observe Ventoy menu appears
-3. Select custom Ubuntu ISO
-4. Verify shell prompt reached
+3. Select the Kintsugi ISO
+4. Verify the Xubuntu live session / shell prompt reached
 
 **Expected**: Boot to shell in < 90 seconds
 **Pass criteria**: Shell prompt accessible
@@ -116,9 +115,9 @@ fi
 ### TC-4: Claude Code Online Test
 
 **Requirement**: FR-3.1, FR-3.2
-**Precondition**: Network available, ANTHROPIC_API_KEY set
+**Precondition**: Network available; signed in to Claude Code (post-flash)
 **Steps**:
-1. `source ~/.config/ai-keys.env`
+1. Sign in to Claude Code (its login flow; auth lives in persistence, never baked)
 2. `claude --version`
 3. `echo "What is 2+2?" | claude --no-input`
 4. Verify response received
@@ -128,32 +127,29 @@ fi
 ### TC-5: Offline AI Inference Test
 
 **Requirement**: FR-4.1 through FR-4.6
-**Precondition**: No network (QEMU -nic none or cable unplugged)
+**Precondition**: A model has been pulled into persistence (e.g. `kintsugi-models pull qwen3.5:4b`); then no network (QEMU -nic none or cable unplugged)
 **Steps**:
-1. Run `start-ai.sh`
-2. Verify llama-server starts on port 8080
-3. `curl -s http://localhost:8080/v1/models | jq .`
-4. Run interactive query:
+1. Run `start-ai` (launches Ollama; it ships stopped)
+2. Verify Ollama is up and the model is present: `ollama list`
+3. `curl -s http://localhost:11434/v1/models | jq .`
+4. Run an interactive query:
    ```bash
-   curl -s http://localhost:8080/v1/chat/completions \
-     -H "Content-Type: application/json" \
-     -d '{"model":"default","messages":[{"role":"user","content":"Write a bash script to check disk health with smartctl"}]}'
+   ollama run qwen3.5:4b "Write a bash script to check disk health with smartctl"
    ```
-5. Verify coherent bash script in response
-6. Test `llama-cli` interactive mode
+5. Verify a coherent bash script in the response
 
-**Pass criteria**: Model responds with relevant bash script, >5 tokens/second
+**Pass criteria**: Model responds with a relevant bash script, > 5 tokens/second
 
 ### TC-6: Persistence Reboot Test
 
 **Requirement**: FR-5.1 through FR-5.5
 **Steps**:
-1. Boot into custom Ubuntu with persistence
+1. Boot the Kintsugi (Xubuntu) live session with persistence
 2. Create test file: `echo "persist-test" > /root/persistence-marker.txt`
 3. Install a package: `apt install -y cowsay`
 4. Add shell alias: `echo 'alias testpersist="echo works"' >> /root/.bashrc`
 5. Reboot (via QEMU restart or physical reboot)
-6. Boot again into custom Ubuntu
+6. Boot again into the Kintsugi live session
 7. Verify:
    - `cat /root/persistence-marker.txt` → "persist-test"
    - `cowsay "hello"` → works
@@ -164,17 +160,18 @@ fi
 ### TC-7: Supplementary ISO Boot Tests
 
 **Requirement**: FR-8.1 through FR-8.5
-**Steps**: Boot each supplementary ISO from Ventoy menu, verify:
+**Precondition**: The optional rescue ISOs have been added to the data partition (#35)
+**Steps**: Boot each added supplementary ISO from the Ventoy menu, verify:
 
 | ISO | Verification |
 |-----|-------------|
 | SystemRescue | Shell prompt with `sysrescue` hostname |
 | Clonezilla | Clonezilla wizard appears |
 | GParted Live | GParted UI launches or CLI accessible |
-| Hiren's BootCD PE | Windows PE desktop appears |
-| Ubuntu Desktop | Ubuntu installer welcome screen |
+| Memtest86+ | Memtest86+ memory test screen appears |
+| (any operator-added installer ISO) | That ISO's installer/welcome screen appears |
 
-**Pass criteria**: Each ISO boots to expected interface
+**Pass criteria**: Each added ISO boots to its expected interface
 
 ### TC-8: Fleet Integration
 
@@ -207,34 +204,33 @@ fi
 2. Ventoy MOK enrollment prompt appears on first boot
 3. Enroll MOK
 4. Reboot → Ventoy menu appears
-5. Boot custom Ubuntu ISO
+5. Boot the Kintsugi ISO
 
 **Pass criteria**: Successful boot with Secure Boot enabled after MOK enrollment
 
-### TC-11: AI Model Auto-Selection
+### TC-11: User-Driven Model Loading
 
-**Requirement**: FR-4.7
+**Requirement**: FR-4.5, FR-4.6 (RAM-based GGUF auto-select is **RETIRED** per ADR-005)
 **Steps**:
-1. Boot QEMU with `-m 8G` (8GB RAM)
-2. Run `start-ai.sh`
-3. Verify Phi-4-mini selected (not Qwen 7B)
-4. Boot QEMU with `-m 16G`
-5. Run `start-ai.sh`
-6. Verify Qwen2.5-Coder 7B selected
+1. On a fresh boot, confirm the base image ships **no** model weights (`ollama list` is empty)
+2. `kintsugi-models pull qwen3.5:4b` (or `ollama pull`) — populates `/data/ollama/models` in persistence
+3. Reboot; verify the model persists (`ollama list` still shows it)
+4. `start-ai` surfaces the user-loaded model
 
-**Pass criteria**: Correct model selected based on available RAM
+**Pass criteria**: No weights baked into the image; a user-pulled model loads and survives reboot
 
 ### TC-12: Aider Offline Integration
 
-**Requirement**: FR-4.5
+**Requirement**: FR-4.10
+**Precondition**: A model pulled into persistence; no network
 **Steps**:
-1. Boot with no network
-2. Run `start-ai.sh` (starts llama-server)
+1. Run `start-ai` (starts Ollama)
+2. Point Aider at the local Ollama endpoint (`OPENAI_API_BASE=http://localhost:11434/v1`)
 3. `aider --no-auto-commits`
 4. Ask Aider to create a simple script
-5. Verify Aider generates code using local API
+5. Verify Aider generates code using the local Ollama API
 
-**Pass criteria**: Aider produces functional code via local llama-server
+**Pass criteria**: Aider produces functional code via the local Ollama endpoint
 
 ---
 

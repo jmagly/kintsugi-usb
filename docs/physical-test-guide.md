@@ -1,101 +1,86 @@
-# Physical Test Guide: USB Toolkit
+# Physical Test Guide: Kintsugi USB
 
-Use this guide when plugging the USB into a test machine. Results are stored on the USB for later analysis.
+Use this guide when plugging the drive into a test machine. Results can be saved
+to persistence for later analysis.
 
 ---
 
 ## Quick Start
 
-1. **Insert USB** into test machine
-2. **Boot from USB** (F12/F2 for boot menu, select USB)
-3. **Ventoy menu appears** — select "Ubuntu ML-Support 24.04"
-4. **Persistence prompt** — select "Yes" (should auto-select in 3s)
-5. **Ubuntu boots** — "Try Ubuntu" at the installer prompt (NOT Install)
-6. **Open terminal** and run setup
+1. **Insert USB** into the test machine.
+2. **Boot from USB** (F12/F2/Esc for the one-time boot menu; select the USB).
+3. **Ventoy menu appears** — select **Kintsugi**.
+4. **Kintsugi (Xubuntu / XFCE) live session boots** — choose the **Try / Live**
+   option, NOT Install. Persistence is bound automatically (`ventoy.json`).
+5. **Open a terminal** and continue below.
 
 ---
 
 ## First Boot Setup
 
-On the FIRST boot, run the setup script to install rescue tools and configure AI:
+The Kintsugi runtime scripts are installed **inside the image** and are on
+`PATH` (no `/cdrom/...` hunting). On first boot you can run the setup helper:
 
 ```bash
-# Find and run the setup script from USB data partition
-# The USB data partition is typically at /cdrom or /isodevice
-sudo bash /cdrom/tools/bin/first-boot-setup.sh
-
-# If /cdrom doesn't work, try finding it:
-find /media /cdrom /isodevice -name "first-boot-setup.sh" 2>/dev/null
+first-boot-setup        # configures the live session / AI stack wiring
 ```
 
-This installs ~500MB of rescue tools into the persistence layer. Takes ~5-10 minutes.
+Rescue tooling (gdisk, testdisk, ddrescue, smartmontools, cryptsetup, etc.) and
+the 32-bit runtime are already baked into the image — nothing to install.
 
 ---
 
 ## Run Tests
 
-After setup, run the test harness:
-
 ```bash
-# Full test suite (recommended for first test on each machine)
-sudo usb-test-harness.sh --full
-
-# Quick boot + tool check only
-sudo usb-test-harness.sh --quick
-
-# AI stack only
-sudo usb-test-harness.sh --ai-only
+sudo usb-test-harness --full      # full suite (recommended on each new machine)
+sudo usb-test-harness --quick     # quick boot + tool check
+sudo usb-test-harness --ai-only   # AI stack only
 ```
 
 ### Where Results Go
 
-Results are stored in TWO locations:
-1. **Live filesystem**: `/var/log/usb-toolkit/test-YYYYMMDD-HHMMSS/`
-2. **USB data partition** (persists): The script auto-copies to USB if writable
+1. **Live filesystem**: `/var/log/kintsugi/test-YYYYMMDD-HHMMSS/`
+2. **Persistence** (survives reboot): copy results into your home or `/data`:
 
-To manually copy results to USB:
 ```bash
-# Find the latest test results
-LATEST=$(ls -td /var/log/usb-toolkit/test-* | head -1)
-
-# Copy to USB data partition
-USB=$(find /media /cdrom /isodevice -name "test-results" -type d 2>/dev/null | head -1)
-cp -r "$LATEST" "$USB/"
+LATEST=$(ls -td /var/log/kintsugi/test-* | head -1)
+cp -r "$LATEST" ~/    # persists via the Ventoy overlay
 ```
 
 ---
 
 ## Test the AI Stack
 
+> Models are **not** baked into the image. Pull at least one first (needs network
+> the first time; the weights then live in persistence at `/data/ollama/models`).
+
+```bash
+kintsugi-models pull qwen3.5:4b     # or: ollama pull qwen3.5:4b
+```
+
 ### Offline (no internet)
 
 ```bash
-# Start AI stack (auto-detects offline mode)
-sudo start-ai.sh
+start-ai                            # launches Ollama (ships stopped) + reports tools
+ollama list                         # confirm the model is present
+ollama run qwen3.5:4b "Write a bash one-liner to check disk SMART health"
 
-# Interactive chat with local model
-llama-cli -m /opt/models/qwen3.5-4b-q4_k_m.gguf -cnv
-
-# API test
-curl -s http://localhost:8080/v1/chat/completions \
+# OpenAI-compatible endpoint (Ollama default port 11434):
+curl -s http://localhost:11434/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model":"default","messages":[{"role":"user","content":"Write a bash one-liner to check disk SMART health"}]}' \
+  -d '{"model":"qwen3.5:4b","messages":[{"role":"user","content":"hello"}]}' \
   | python3 -m json.tool
 ```
 
-### Online (with internet)
+### Online (with internet) — agentic CLIs
+
+Auth is **never baked**; sign in with your own credentials post-flash, per CLI:
 
 ```bash
-# Set up API keys first
-sudo nano /root/.config/ai-keys.env
-# Uncomment and fill in ANTHROPIC_API_KEY
-
-# Source the keys
-source /root/.config/ai-keys.env
-
-# Test Claude Code
+claude            # follow the sign-in prompt (or the CLI's documented login)
 claude --version
-echo "What command checks if a LUKS partition is encrypted?" | claude
+# codex / opencode / copilot / openclaw / omnius / aider are likewise available
 ```
 
 ---
@@ -103,63 +88,53 @@ echo "What command checks if a LUKS partition is encrypted?" | claude
 ## Persistence Test
 
 ```bash
-# Write a marker file
-echo "persist-test-$(hostname)-$(date -Iseconds)" > /root/persist-marker.txt
-apt install -y cowsay  # Install a test package
-
-# Reboot
+echo "persist-test-$(hostname)-$(date -Iseconds)" > ~/persist-marker.txt
+sudo apt install -y cowsay          # install a test package into the overlay
 sudo reboot
 
-# After reboot, verify:
-cat /root/persist-marker.txt   # Should show previous content
-cowsay "persistence works"      # Should work
+# After reboot, re-enter the Kintsugi live session and verify:
+cat ~/persist-marker.txt            # should show previous content
+cowsay "persistence works"          # should still be installed
+ollama list                         # pulled model should still be present
 ```
 
 ---
 
 ## What to Bring Back
 
-When you bring the USB back, I need:
-
-1. **Test results** — automatically saved to `/data/test-results/` on USB
-2. **Any error screenshots** — if boot fails, photo the screen
+1. **Test results** — from `/var/log/kintsugi/` (and whatever you copied to persistence).
+2. **Error screenshots** — if boot fails, photograph the screen.
 3. **Notes on**:
-   - Did Ventoy menu appear?
-   - Did Secure Boot prompt (MOK enrollment)?
-   - Did "Try Ubuntu" boot successfully?
-   - How long did boot take (approx)?
-   - Did persistence work after reboot?
-   - Did AI tools run (offline/online)?
+   - Did the Ventoy menu appear?
+   - Did Secure Boot prompt for MOK enrollment?
+   - Did the **Kintsugi (Xubuntu) live session** boot successfully?
+   - Approx boot time?
+   - Did persistence survive a reboot (marker file + pulled model)?
+   - Did the AI stack run (Ollama offline; agentic CLIs online after sign-in)?
 
 ---
 
 ## Troubleshooting Boot Issues
 
 ### Ventoy menu doesn't appear
-- Check BIOS boot order — USB must be first
-- Try different USB port (USB 3.0 blue port preferred)
-- Disable Secure Boot temporarily in BIOS
+- Check BIOS boot order — USB must be first.
+- Try a different USB port (USB 3.0 blue port preferred).
+- Temporarily disable Secure Boot in BIOS.
 
 ### Secure Boot blocks Ventoy
-- Ventoy will show MOK enrollment screen on first boot
-- Select "Enroll key" → "Continue" → reboot
-- Second boot should work with Secure Boot enabled
+- Ventoy shows a MOK enrollment screen on first boot.
+- Select "Enroll key" → "Continue" → reboot; the second boot works with Secure
+  Boot enabled.
 
-### "Try Ubuntu" is slow
-- Normal for USB — desktop loads from USB3 into RAM
-- First boot is slowest (~60-90 seconds)
-- Subsequent boots with persistence are faster
+### Live session is slow to start
+- Normal for USB — the session loads from USB 3 into RAM.
+- First boot is slowest (~60–90 s); subsequent boots with persistence are faster.
 
 ### USB data partition not found
 ```bash
-# List block devices
-lsblk
-
-# Look for Ventoy partition
-blkid | grep Ventoy
-
-# Mount manually
-sudo mount /dev/sdXN /mnt/ventoy-data  # Replace sdXN
+lsblk -o NAME,LABEL,FSTYPE,MOUNTPOINT
+blkid | grep -i KINTSUGI
+sudo mount /dev/sdXN /mnt/ventoy-data   # replace sdXN (the exFAT KINTSUGI partition)
 ```
 
 ---
@@ -169,58 +144,49 @@ sudo mount /dev/sdXN /mnt/ventoy-data  # Replace sdXN
 ### ref-host-1 (i9-14900KF, 64GB RAM)
 - [ ] UEFI boot from Ventoy menu
 - [ ] Secure Boot MOK enrollment (if prompted)
-- [ ] Ubuntu Desktop boots to "Try Ubuntu"
-- [ ] first-boot-setup.sh completes
-- [ ] test-usb --full passes
-- [ ] Qwen3.5-9B model loads (64GB RAM = should use 9B)
-- [ ] llama-server responds to API query
-- [ ] Claude Code works (if internet available)
-- [ ] Persistence survives reboot
+- [ ] Kintsugi (Xubuntu) live session boots (Try / Live)
+- [ ] `first-boot-setup` completes
+- [ ] `usb-test-harness --full` passes
+- [ ] A user-pulled model loads via Ollama (e.g. a 9B on 64 GB RAM)
+- [ ] Ollama responds to an API query
+- [ ] An agentic CLI works after sign-in (if internet available)
+- [ ] Persistence survives reboot (marker + model)
 
 ### ref-host-2 (i7-12700H, 32GB RAM)
 - [ ] UEFI boot from Ventoy menu
 - [ ] Secure Boot MOK enrollment (if prompted)
-- [ ] Ubuntu Desktop boots
-- [ ] first-boot-setup.sh completes
-- [ ] test-usb --full passes
-- [ ] Qwen3.5-9B model loads (32GB RAM = should use 9B)
+- [ ] Kintsugi (Xubuntu) live session boots
+- [ ] `first-boot-setup` completes
+- [ ] `usb-test-harness --full` passes
+- [ ] A user-pulled model loads via Ollama
 - [ ] Persistence survives reboot
 
 ### ref-host-3 (i7-8700K, 32GB RAM)
 - [ ] UEFI boot
-- [ ] test-usb --quick passes
-- [ ] AI inference works
+- [ ] `usb-test-harness --quick` passes
+- [ ] Ollama inference works (with a pulled model)
 
 ---
 
-## File Locations on USB
+## File Locations on the Drive
 
 ```
-/                          USB root (exFAT, label: Ventoy)
-├── ISO/
-│   ├── install/
-│   │   └── ubuntu-24.04-desktop-amd64.iso     (6.0 GB, primary)
-│   └── rescue/
-│       ├── systemrescue-12.03-amd64.iso       (1.2 GB)
-│       ├── clonezilla-amd64.iso               (436 MB)
-│       ├── gparted-live-amd64.iso             (562 MB)
-│       └── memtest86plus.iso                  (6 MB)
-├── models/
-│   ├── qwen3.5-9b-q4_k_m.gguf                (5.3 GB)
-│   └── qwen3.5-4b-q4_k_m.gguf                (2.6 GB)
-├── tools/bin/
-│   ├── llama-cli, llama-server                (AI inference)
-│   ├── claude                                 (Claude Code)
-│   ├── first-boot-setup.sh                    (run once)
-│   ├── start-ai.sh                            (AI launcher)
-│   └── usb-test-harness.sh                    (test suite)
-├── persistence/
-│   └── ubuntu-ml-persist.dat                  (12 GB ext4)
-├── data/
-│   ├── scripts/          (fleet scripts from sysops repo)
-│   ├── docs/             (fleet documentation)
-│   ├── recovery/         (recovery runbooks)
-│   └── test-results/     (test harness output)
-└── ventoy/
-    └── ventoy.json       (boot menu config)
+Data partition (exFAT, label: KINTSUGI)
+├── kintsugi-v2026.5.0.iso        the single bootable Kintsugi system
+├── README.txt                    plain-language recipient guide
+├── ventoy/
+│   ├── ventoy.json               persistence plugin config
+│   └── persistence/
+│       └── kintsugi.dat          32 GiB ext4 persistence (bound to the ISO)
+└── (optional) systemrescue-*.iso / clonezilla-*.iso / gparted-*.iso / memtest86plus-*.iso
+
+Inside persistence (kintsugi.dat, mounted at runtime as the RW overlay)
+├── /data/ollama/models           user-loaded model weights (post-flash)
+├── agentic-CLI auth / tokens      (post-flash sign-in)
+└── ~/ home, installed packages, shell history, custom scripts
+
+Inside the Kintsugi ISO squashfs (read-only)
+└── Xubuntu Minimal + XFCE, rescue tools, i386 runtime, Ollama, agentic CLIs,
+    and the Kintsugi scripts on PATH (start-ai, first-boot-setup,
+    usb-test-harness, kintsugi-models/-frameworks/-install-hermes, kintsugi-eject)
 ```

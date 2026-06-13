@@ -1,128 +1,146 @@
-# Build Guide: ML-Augmented Boot & Support USB
+# Build Guide: Kintsugi USB (manual Ventoy assembly)
 
-How to reproduce this USB from scratch — by hand.
+How to assemble a Kintsugi drive from a built Kintsugi ISO — by hand.
 
-> **Scope — manual / advanced reference.** This is the **fully manual** Ventoy assembly: a hand-built Ventoy drive carrying stock Ubuntu Desktop + hand-placed tools, models, and rescue ISOs. The **supported path** is the toolkit: `./scripts/kintsugi-build` builds a *custom* ISO by **remastering the stock Ubuntu ISO** ([ADR-008](../.aiwg/architecture/adr-008-build-tooling-remaster-stock-iso.md), superseded live-build) and auto-chains `scripts/usb-toolkit/make-ventoy-image.sh` ([#42](https://git.integrolabs.net/roctinam/kintsugi-usb/issues/42)), which automates Steps 1–7 below (Ventoy install, layout, persistence, ISO placement). Start with `toolkit-guide.md`. Keep this guide as the reference for the underlying Ventoy mechanics and for one-off manual builds; the toolkit is what produces the distributable `v2026.5.0` image. Default rescue bundle + pinned versions/sha256 are tracked in `manifest/rescue-isos-recommended.yaml` ([#35](https://git.integrolabs.net/roctinam/kintsugi-usb/issues/35)).
+> **Scope — manual / advanced reference.** The **supported path** is the toolkit:
+> `./scripts/kintsugi-build` builds the custom ISO by **remastering the stock
+> Xubuntu Minimal 24.04 ISO** ([ADR-008](../.aiwg/architecture/adr-008-build-tooling-remaster-stock-iso.md),
+> supersedes live-build) and auto-chains `scripts/usb-toolkit/make-ventoy-image.sh`
+> ([#42](https://git.integrolabs.net/roctinam/kintsugi-usb/issues/42)), which
+> automates everything below (Ventoy install, layout, persistence, ISO placement).
+> Start with [`toolkit-guide.md`](toolkit-guide.md). Keep this guide for the
+> underlying Ventoy mechanics and one-off manual builds. Default rescue bundle +
+> pinned versions/sha256 are tracked in `manifest/rescue-isos-recommended.yaml`
+> ([#35](https://git.integrolabs.net/roctinam/kintsugi-usb/issues/35)).
+>
+> **What this drive carries (current design):** a *single* remastered **Kintsugi
+> ISO** (Xubuntu Minimal 24.04.4 + XFCE, with the rescue tools, the 32-bit
+> runtime, Ollama, and the agentic CLIs already inside its squashfs), plus a
+> Ventoy persistence file, plus *optionally* a few stock rescue ISOs. There are
+> **no hand-placed model weights or tool binaries** — the AI stack is baked into
+> the Kintsugi ISO at remaster time, and **models are loaded post-flash** into
+> persistence (`/data/ollama/models`, ADR-005).
 
 ---
 
 ## Prerequisites
 
-- 59GB+ USB 3.0 flash drive
-- Ubuntu 24.04 host with internet access
-- ~30GB free disk space for downloads
+- 59 GB+ USB 3.0 flash drive
+- Linux host (Ubuntu 24.04 recommended) with internet access
+- A built **Kintsugi ISO** — produce it first with
+  `sudo scripts/usb-toolkit/make-remaster-iso.sh --base <stock-xubuntu-minimal.iso> --with-agentic --with-ai-stack`
+  (see [`toolkit-guide.md`](toolkit-guide.md))
+- ~10 GB free disk space (more if you also stage rescue ISOs)
 
 ## Step 1: Install Ventoy
 
 ```bash
-# Download Ventoy
 cd /tmp && curl -sL "https://github.com/ventoy/Ventoy/releases/download/v1.1.05/ventoy-1.1.05-linux.tar.gz" -o ventoy.tar.gz
 tar xzf ventoy.tar.gz && cd ventoy-1.1.05
 
-# Install with GPT + Secure Boot + 20GB reserved
-# WARNING: This wipes /dev/sdX — confirm correct device!
-echo -e "y\ny" | sudo bash Ventoy2Disk.sh -I -g -s -r 20480 /dev/sdX
+# Install with GPT + Secure Boot support.
+# WARNING: this wipes /dev/sdX — confirm the correct device (check the serial!).
+echo -e "y\ny" | sudo bash Ventoy2Disk.sh -I -g -s /dev/sdX
 ```
 
-## Step 2: Create Directory Structure
+Ventoy creates the two-partition layout itself: `sdX1` (exFAT data partition) and
+`sdX2` (`VTOYEFI`, the 32 MB UEFI bootloader). You only touch `sdX1`.
+
+## Step 2: Mount the data partition
 
 ```bash
+sudo mkdir -p /mnt/ventoy
 sudo mount /dev/sdX1 /mnt/ventoy
-sudo mkdir -p /mnt/ventoy/{ISO/custom,ISO/rescue,ISO/install,ISO/windows,ventoy,persistence,tools/bin,models,data/{scripts,ssh,docs,recovery,test-results}}
+sudo mkdir -p /mnt/ventoy/ventoy/persistence
 ```
 
-## Step 3: Download ISOs
+No elaborate directory tree is needed — Ventoy boots any `.iso` it finds on the
+data partition. The Kintsugi ISO sits at the partition root.
+
+## Step 3: Place the Kintsugi ISO (and optional rescue ISOs)
 
 ```bash
-cd ~/Downloads/usb-toolkit/iso
+# The single bootable Kintsugi system (from make-remaster-iso.sh):
+sudo cp ~/kintsugi-builds/dist/kintsugi-v2026.5.0.iso /mnt/ventoy/
 
-# Ubuntu Desktop 24.04 (primary environment)
-curl -L -o ubuntu-24.04-desktop-amd64.iso "https://releases.ubuntu.com/24.04.2/ubuntu-24.04.2-desktop-amd64.iso"
-
-# SystemRescue
-curl -L -o systemrescue-12.03-amd64.iso "https://sourceforge.net/projects/systemrescuecd/files/sysresccd-x86/12.03/systemrescue-12.03-amd64.iso/download"
-
-# Clonezilla
-curl -L -o clonezilla-amd64.iso "https://sourceforge.net/projects/clonezilla/files/clonezilla_live_stable/3.2.0-5/clonezilla-live-3.2.0-5-amd64.iso/download"
-
-# GParted
-curl -L -o gparted-live-amd64.iso "https://sourceforge.net/projects/gparted/files/gparted-live-stable/1.7.0-1/gparted-live-1.7.0-1-amd64.iso/download"
-
-# Memtest86+
-curl -sL "https://www.memtest.org/download/v7.00/mt86plus_7.00_64.iso.zip" -o memtest.zip && unzip memtest.zip
-
-# Copy to USB
-sudo cp ubuntu-24.04-desktop-amd64.iso /mnt/ventoy/ISO/install/
-sudo cp systemrescue-12.03-amd64.iso clonezilla-amd64.iso gparted-live-amd64.iso /mnt/ventoy/ISO/rescue/
-sudo cp mt86plus_7.00_64.iso /mnt/ventoy/ISO/rescue/memtest86plus.iso
+# OPTIONAL: stock rescue ISOs — Ventoy lists them in the boot menu automatically.
+# Pin versions/sha256 per manifest/rescue-isos-recommended.yaml (#35).
+# sudo cp systemrescue-*.iso clonezilla-live-*.iso gparted-live-*.iso memtest86plus-*.iso /mnt/ventoy/
 ```
 
-## Step 4: Download AI Tools
+> There is **no** custom "ML-support" ISO and **no** standalone Ubuntu Desktop
+> installer in the current design — the Kintsugi ISO is the bootable system.
 
-```bash
-# llama.cpp
-curl -L -o llama-cpp.tar.gz "https://github.com/ggml-org/llama.cpp/releases/download/b8192/llama-b8192-bin-ubuntu-x64.tar.gz"
-tar xzf llama-cpp.tar.gz
-sudo cp llama-b8192/llama-{cli,server,completion,bench} /mnt/ventoy/tools/bin/
+## Step 4: AI tools and models — nothing to hand-place
 
-# Qwen3.5 models
-curl -L -o /mnt/ventoy/models/qwen3.5-9b-q4_k_m.gguf "https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/Qwen3.5-9B-Q4_K_M.gguf"
-curl -L -o /mnt/ventoy/models/qwen3.5-4b-q4_k_m.gguf "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf"
+The offline runtime (Ollama, optionally `llama.cpp`) and the agentic CLIs
+(claude-code, codex, opencode, copilot, openclaw, omnius, aider) are already
+**inside the Kintsugi ISO's squashfs** — installed at remaster time by
+`make-remaster-iso.sh --with-ai-stack --with-agentic`. Do **not** copy llama
+binaries, GGUF files, or CLI binaries onto the drive.
 
-# Claude Code (copy from host installation)
-sudo cp ~/.local/share/claude/versions/$(claude --version | head -1 | awk '{print $1}') /mnt/ventoy/tools/bin/claude
-```
+**Model weights are loaded post-flash**, not baked: after first boot, run
+`kintsugi-models pull <model>` (or `ollama pull`) to populate
+`/data/ollama/models` in persistence (ADR-005).
 
-## Step 5: Copy Scripts
-
-```bash
-sudo cp scripts/usb-toolkit/{first-boot-setup.sh,start-ai.sh,usb-test-harness.sh} /mnt/ventoy/tools/bin/
-sudo chmod +x /mnt/ventoy/tools/bin/*.sh
-```
-
-## Step 6: Create Persistence Image
+## Step 5: Create the persistence image
 
 ```bash
 cd /tmp/ventoy-1.1.05
-# 32 GiB default (per #34; size to your stick). The toolkit bakes this via make-ventoy-image.sh --persistence-size.
-sudo bash CreatePersistentImg.sh -s 32768 -l casper-rw -o /mnt/ventoy/persistence/ubuntu-ml-persist.dat
+# 32 GiB default (per #34; size to your stick). make-ventoy-image.sh exposes this
+# as --persistence-size.
+sudo bash CreatePersistentImg.sh -s 32768 -l casper-rw -o /mnt/ventoy/ventoy/persistence/kintsugi.dat
 ```
 
-## Step 7: Configure Ventoy
+## Step 6: Configure Ventoy persistence
 
-Copy `ventoy.json` to `/mnt/ventoy/ventoy/ventoy.json` (see architecture.md for contents).
+Create `/mnt/ventoy/ventoy/ventoy.json` binding the persistence backend to the
+Kintsugi ISO (match the ISO filename you copied in Step 3):
 
-## Step 8: Copy payload data
+```json
+{
+    "persistence": [
+        {
+            "image": "/kintsugi-v2026.5.0.iso",
+            "backend": "/ventoy/persistence/kintsugi.dat"
+        }
+    ]
+}
+```
+
+## Step 7: Friendly label + on-drive README (recommended)
+
+So recipients aren't confused by the default `Ventoy` label, give the data
+partition a friendly label and drop a plain-text README at its root — exactly
+what `make-ventoy-image.sh` does automatically:
 
 ```bash
-# Scripts ship as payload:
-sudo cp scripts/*.sh /mnt/ventoy/data/scripts/
-# Operator-provided fleet docs / recovery packs are optional and live outside
-# this public repo (in your fleet repos). Copy your own if you maintain them:
-# sudo cp -r /path/to/your/fleet-docs/ /mnt/ventoy/data/docs/fleet/
+sudo cp config/drive-readme.txt /mnt/ventoy/README.txt
+sudo umount /mnt/ventoy
+sudo exfatlabel /dev/sdX1 KINTSUGI          # partition must be unmounted
 ```
 
-> **End-user labels + README (recommended).** So recipients aren't confused by the default `Ventoy` label, give the data partition a friendly label and drop a plain-text README at its root — exactly what `make-ventoy-image.sh` does automatically:
->
-> ```bash
-> sudo umount /mnt/ventoy
-> sudo exfatlabel /dev/sdX1 KINTSUGI          # friendly label (partition must be unmounted)
-> sudo mount /dev/sdX1 /mnt/ventoy
-> sudo cp config/drive-readme.txt /mnt/ventoy/README.txt
-> ```
-
-## Step 9: Sync and Unmount
+## Step 8: Sync and unmount
 
 ```bash
 sudo sync
-sudo umount /mnt/ventoy
+sudo umount /mnt/ventoy 2>/dev/null || true
 ```
 
 ## First Use
 
-1. Boot from USB on target machine
-2. Select "Ubuntu ML-Support 24.04" from Ventoy menu
-3. Choose "Try Ubuntu" (NOT Install)
-4. Accept persistence when prompted
-5. Open terminal, run: `sudo bash /cdrom/tools/bin/first-boot-setup.sh`
-6. After setup: `sudo start-ai.sh` to launch AI stack
+1. Boot from the USB on the target machine (one-time boot menu key).
+2. Select **Kintsugi** from the Ventoy menu.
+3. Choose the **Try / Live** session (NOT Install).
+4. Persistence is bound automatically via `ventoy.json` — your changes,
+   downloaded models, and sign-ins survive reboots.
+5. The Kintsugi runtime scripts are on `PATH` (installed in the squashfs). Pull a
+   model and start the AI stack:
+
+   ```bash
+   kintsugi-models pull qwen3.5:4b     # populates /data/ollama/models (persistence)
+   start-ai                            # launches Ollama + reports available CLIs
+   ```
+
+6. Sign in to the agentic CLIs with your own credentials (post-flash; never
+   baked).
