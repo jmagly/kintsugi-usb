@@ -5,6 +5,54 @@ All notable changes to Kintsugi USB are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning is **CalVer** (`YYYY.M.PATCH`, no leading zeros).
 
+## [2026.6.0] - 2026-06-13 — "Offline IronKey"
+
+Adds offline legacy encrypted-USB unlock, hardens the remaster build against a
+repack-blocking daemon, and reconciles the documentation with the shipping
+design. Builds on the 2026.5.0 toolkit baseline.
+
+### Added
+- **Offline legacy-device unlock** — the 32-bit (`i386`) runtime (`libc6:i386`,
+  plus best-effort `libstdc++6`/`zlib1g`) is now baked into the remaster, so
+  legacy Imation/IronKey USB unlockers run **offline, out of the box**. New
+  always-on in-chroot provisioner `scripts/usb-toolkit/legacy-tools-provision.sh`
+  and field guide `docs/legacy-device-unlock.md` (#45).
+
+### Fixed
+- **Remaster repack** — `make-remaster-iso.sh` now reaps any process still
+  chrooted into the build before repack. `npm install -g omnius` spawns a
+  persistent daemon that held the chroot's `/dev` open and aborted the squashfs
+  repack (`umount: target is busy`); the build is now robust to any
+  daemon-spawning installer.
+- **Ollama install** — `ai-stack-provision.sh` no-op-shims `systemctl` during the
+  Ollama install so the upstream installer cannot start the service inside the
+  build chroot (nor disturb the host's). Ollama ships installed-but-stopped;
+  `start-ai` launches it on demand.
+
+### Changed
+- **OS identity corrected** — README, `CLAUDE.md`, and `AIWG.md` now state the
+  base is **Xubuntu Minimal 24.04.4 LTS (XFCE)**, not "Ubuntu 24.04 Desktop /
+  full Ubuntu desktop."
+- **Docs reconciled to ADR-008** — `architecture.md`, `build-guide.md`,
+  `physical-test-guide.md`, `requirements.md`, and `test-strategy.md` rewritten
+  to the shipping design: a single remastered Xubuntu-Minimal Kintsugi ISO +
+  Ventoy persistence, Ollama as the offline runtime, agentic CLIs in the
+  squashfs, models and CLI auth user-loaded post-flash. Retired the stale
+  "ML-support ISO / Ubuntu Server base + xfce4 layer / standalone Ubuntu Desktop
+  installer / baked GGUF weights / llama-server on :8080" narrative.
+
+### Security
+- Cryptographic signing (minisign) remains **deferred** (ADR-006 §D5; tracked #19).
+
+### Notes
+- **Version vs. image build name.** The distributable image from this cycle was
+  assembled under the `2026.5.0` build profile (`kintsugi-v2026.5.0*`); the
+  **source** release is tagged `v2026.6.0` (CalVer for the June cut). The
+  `2026.5.0` changelog entry below was drafted (2026-05-23) but never tagged —
+  `v2026.6.0` is the first git tag in the repo.
+
+[2026.6.0]: https://git.integrolabs.net/roctinam/kintsugi-usb/releases/tag/v2026.6.0
+
 ## [2026.5.0] - 2026-05-23 — "First Release"
 
 First tagged release. Ships the wizard-first build toolkit: clone the repo on an

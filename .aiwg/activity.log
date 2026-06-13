@@ -27,3 +27,4 @@
 ## [2026-06-13 16:57] update | re-imaged /dev/sdd (serial 05250930) with kintsugi-v2026.5.0-r2 (offline IronKey i386 runtime #45 + latest tools); build fixes d798144
 ## [2026-06-13 17:55] update | docs OS-identity accuracy: README + CLAUDE.md/AIWG.md now state Xubuntu Minimal 24.04.4 (XFCE), not "Ubuntu Desktop/full desktop" (matches flashed base). Stale architecture narrative deferred.
 ## [2026-06-13 18:11] update | reconciled docs/{architecture,build-guide,physical-test-guide,requirements,test-strategy}.md to ADR-008 current design (single remastered Xubuntu-Minimal Kintsugi ISO + Ventoy persistence; Ollama; models post-flash) — retired ML-support ISO / Ubuntu Server base / standalone installer / baked-GGUF / llama-server narrative
+## [2026-06-13 18:36] update | cut release v2026.6.0 — CHANGELOG [2026.6.0] (offline IronKey #45 + build fixes + doc reconciliation) + README version badge/status; first git tag

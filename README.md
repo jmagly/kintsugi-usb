@@ -11,7 +11,7 @@ AI-assisted rescue boot media for broken systems. A Ventoy multi-boot USB on Xub
 ```
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
-[![Version](https://img.shields.io/badge/version-2026.5.0--pre-orange?style=flat-square)](.aiwg/planning/roadmap.md)
+[![Version](https://img.shields.io/badge/version-2026.6.0-brightgreen?style=flat-square)](CHANGELOG.md)
 [![Boot](https://img.shields.io/badge/boot-UEFI%20%2B%20BIOS-brightgreen?style=flat-square)](#whats-on-it)
 [![Base](https://img.shields.io/badge/base-Xubuntu%20Minimal%2024.04-0E63B6?style=flat-square&logo=ubuntu&logoColor=white)](#whats-on-it)
 [![Offline AI](https://img.shields.io/badge/offline%20AI-Ollama%20%2B%20llama.cpp-blueviolet?style=flat-square)](#whats-on-it)
@@ -115,7 +115,7 @@ See [docs/about-the-name.md](docs/about-the-name.md) for the etymology and philo
 
 ## Status
 
-**v2026.5.0 — pre-release.** The wizard-first toolkit auto-chains end-to-end ([#36](https://git.integrolabs.net/roctinam/kintsugi-usb/issues/36)): `./scripts/kintsugi-build` takes a fresh clone to a flashable `.img.zst` + sha256 via the ADR-008 remaster pipeline, with the offline AI stack and agentic CLIs baked in. The tag is **gated on the hardware-acceptance round-trip** ([#37](https://git.integrolabs.net/roctinam/kintsugi-usb/issues/37)) — build → flash → boot → persistence verified on real hardware. See the [roadmap](.aiwg/planning/roadmap.md) for what's next.
+**v2026.6.0 — first tagged release.** The wizard-first toolkit auto-chains end-to-end ([#36](https://git.integrolabs.net/roctinam/kintsugi-usb/issues/36)): `./scripts/kintsugi-build` takes a fresh clone to a flashable `.img.zst` + sha256 via the ADR-008 remaster pipeline, with the offline AI stack and agentic CLIs baked in. v2026.6.0 adds **offline legacy-USB (IronKey) unlock** ([#45](https://git.integrolabs.net/roctinam/kintsugi-usb/issues/45)) and reconciles the docs to the shipping design (see [CHANGELOG.md](CHANGELOG.md)). Full hardware-acceptance round-trip — build → flash → boot → persistence on real hardware — is tracked in [#37](https://git.integrolabs.net/roctinam/kintsugi-usb/issues/37). See the [roadmap](.aiwg/planning/roadmap.md) for what's next.
 
 Versioning follows **CalVer** (`YYYY.M.PATCH`). Distribution is sha256-verified; cryptographic signing (minisign) lands in v1.1 ([#19](https://git.integrolabs.net/roctinam/kintsugi-usb/issues/19)).
 
