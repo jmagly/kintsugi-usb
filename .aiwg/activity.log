@@ -23,3 +23,4 @@
 ## [2026-05-24 05:16] update | .aiwg/risks/risk-list.md — 2026-05-24 sysops-drift amendment (R-14 advanced, R-15/#33 dormant)
 ## [2026-05-24 20:33] update | amend iteration-001-plan.md + rewrite roadmap.md for Ventoy/persistence audit scope (v2026.5.0 gated on #37)
 ## [2026-05-24 20:45] update | reconcile docs to wizard+Ventoy flow; mark doc-reconciliation done in roadmap
+## [2026-06-13 14:39] create | i386 runtime baked into remaster for legacy vendor unlockers (IronKey) — legacy-tools-provision.sh + docs/legacy-device-unlock.md (#45, commit 28a4a74)
