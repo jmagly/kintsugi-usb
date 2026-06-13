@@ -33,6 +33,7 @@ This repo is also the **toolkit** that produces the drive: a wizard remasters a 
 - **Ventoy multi-boot loader** — UEFI + BIOS; pick your ISO at boot, with persistence so state survives reboots.
 - **Ubuntu 24.04 Desktop** (Xubuntu base) — full desktop OS for hands-on rescue.
 - **Rescue ISOs** — SystemRescue, Clonezilla, GParted Live, Memtest86+ *(catalog in progress, [#35](https://git.integrolabs.net/roctinam/kintsugi-usb/issues/35))*.
+- **Legacy encrypted-drive unlock** — the 32-bit (`i386`) runtime needed by legacy vendor unlockers is baked in, so older Imation/IronKey secure USB drives unlock **offline, out of the box**. See [`docs/legacy-device-unlock.md`](docs/legacy-device-unlock.md).
 - **Offline AI stack** — Ollama (with `llama.cpp` available) as a local runtime, pre-installed and wired to a persistence-backed model store (`/data/ollama/models`) so models pulled in the field survive reboots. No model weights ship in the read-only image by default ([ADR-005](.aiwg/architecture/adr-005-toolkit-scope-and-user-driven-models.md)); the operator loads their own via `kintsugi-models` / `ollama pull`, or pre-loads them into the drive's persistence at build time. Start from [`manifest/models-recommended.yaml`](manifest/models-recommended.yaml).
 - **Agentic CLIs (pre-installed)** — Claude Code, Codex, OpenCode, Copilot, OpenClaw, omnius, and Aider, baked in and offline-available. You sign in with your own credentials post-flash — no auth is ever baked. Add or manage more via `kintsugi-frameworks`; the heavier Hermes agent installs on demand via `kintsugi-install-hermes`.
 - **Recovery runbooks** — host-specific AGENT-CONTEXT and RUNBOOK packs an AI can consume directly (operator-provided from the fleet repos; not in this public repo).
@@ -102,6 +103,7 @@ Full external-builder walkthrough: [`docs/toolkit-guide.md`](docs/toolkit-guide.
 | [docs/build-guide.md](docs/build-guide.md) | Manual / reference build (Ventoy mechanics, stock-ISO acquisition) |
 | [docs/wizard-guide.md](docs/wizard-guide.md) | `kintsugi-build` reference: prompts, flags, profile schema, troubleshooting |
 | [docs/toolkit-guide.md](docs/toolkit-guide.md) | External-builder walkthrough: fork → choose models/tools → build → release |
+| [docs/legacy-device-unlock.md](docs/legacy-device-unlock.md) | Unlocking legacy IronKey / Imation encrypted USB drives (offline, 32-bit runtime) |
 | [docs/physical-test-guide.md](docs/physical-test-guide.md) | Testing on physical hardware |
 | [docs/test-strategy.md](docs/test-strategy.md) | Test strategy |
 | [docs/update-strategy.md](docs/update-strategy.md) | Post-flash refresh model — `git pull` + `ollama pull`; reflash only for base-image changes |

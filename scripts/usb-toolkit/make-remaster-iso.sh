@@ -107,6 +107,19 @@ else
     info "  (skip: desktop-provision.sh not found in $SCRIPTS_DIR)"
 fi
 
+# Always provision the 32-bit (i386) runtime for legacy vendor recovery tools
+# (Imation/IronKey CLI unlocker et al.). Core to a rescue drive — these are often
+# old 32-bit binaries and must run OFFLINE out of the box; clean 24.04 ships no
+# i386 runtime. Tiny footprint (~MB), purely additive. Same chroot-exec mechanism
+# as desktop-provision. See docs/legacy-device-unlock.md (#45).
+LEGACY_SRC="$SCRIPTS_DIR/legacy-tools-provision.sh"
+if [ -r "$LEGACY_SRC" ]; then
+    ACTIONS+=( --cp "$LEGACY_SRC" "\$LAYERS[0]/tmp/legacy-tools-provision.sh" )
+    ACTIONS+=( --python "base = ctxt.edit_squashfs(get_squash_names(ctxt)[0]); ctxt.run(['chroot', base, 'bash', '/tmp/legacy-tools-provision.sh'])" )
+else
+    info "  (skip: legacy-tools-provision.sh not found in $SCRIPTS_DIR)"
+fi
+
 # Optionally pre-install the agentic CLI platforms inside the squashfs chroot.
 if [ "$WITH_AGENTIC" = "1" ]; then
     AGENTIC_SRC="$SCRIPTS_DIR/agentic-provision.sh"
@@ -133,6 +146,7 @@ info "  livefs-edit:  $LIVEFS_EDIT"
 info "  Packages:     $(echo "$PACKAGES" | wc -w) rescue packages"
 info "  Scripts:      $RUNTIME_SCRIPTS"
 info "  Desktop:      udiskie automount + tray eject, gnome-disks, udisks polkit, 'Safely Remove' launcher (always)"
+info "  Legacy 32-bit: i386 multiarch + libc6:i386 for vendor unlockers (IronKey CLI, offline) (always) [#45]"
 if [ "$WITH_AGENTIC" = "1" ]; then info "  Agentic:      claude-code, codex, opencode, copilot, openclaw, omnius, aider (pre-installed in-chroot)"; fi
 if [ "$WITH_AI_STACK" = "1" ]; then info "  AI core:      Ollama + mikefarah yq (offline LLM runtime; models pulled post-flash) [#43]"; fi
 info ""

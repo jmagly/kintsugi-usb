@@ -45,6 +45,7 @@ docs/                           # Authoritative build/use docs
 ├── wizard-guide.md             # kintsugi-build reference (prompts, schema, flags)
 ├── update-strategy.md          # Post-flash refresh model
 ├── sanitization-checklist.md   # Pre-imaging secret-scan + hygiene rules
+├── legacy-device-unlock.md     # Unlock legacy IronKey/Imation encrypted USBs (offline, 32-bit runtime)
 ├── physical-test-guide.md      # Physical hardware test procedure
 └── test-strategy.md            # Test strategy
 scripts/                        # Build wizard + imaging pipeline
